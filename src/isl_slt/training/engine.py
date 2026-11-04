@@ -20,7 +20,7 @@ from isl_slt.models.factory import build_model, load_tokenizer
 from isl_slt.training.checkpoint import bundle_tokenizer, compatibility, load_checkpoint, restore_tokenizer, save_checkpoint
 from isl_slt.training.checkpoint import guarded_improvement, publish_snapshots, validate_resume_compatibility
 from isl_slt.utils.io import append_event, directory_lock, file_hash, read_json, versions, write_json, write_jsonl
-from isl_slt.utils.runtime import Budget, autocast, device_for, restore_rng, rng_state, seed_everything, synchronize
+from isl_slt.utils.runtime import Budget, autocast, device_for, environment_report, restore_rng, rng_state, seed_everything, synchronize
 
 
 def optimizer_for(model, config: Config):
@@ -167,6 +167,14 @@ def run_training(config: Config, resume: str | None = None, allow_code_change: b
     if not resume and (allow_code_change or allow_environment_change):
         raise ValueError("Code/environment transition overrides apply only with --resume")
     with directory_lock(config.run_dir):
+        if config.runtime.precision == "bf16":
+            report = environment_report(config.runtime)
+            report_path = Path(config.run_dir) / "env-check.json"
+            write_json(report_path, report)
+            if not report["configured_precision_ok"]:
+                raise RuntimeError(f"BF16 environment probes failed; inspect {report_path} before training")
+            seed_everything(config.training.seed, config.runtime.deterministic,
+                            config.runtime.determinism_mode == "warn")
         for temporary in (Path(config.run_dir) / "checkpoints").glob(".last.pt.*"):
             if temporary.is_file() and not temporary.is_symlink():
                 temporary.unlink()

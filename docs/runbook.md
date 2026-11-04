@@ -1,6 +1,6 @@
 # Preparation, training and evaluation runbook
 
-Commands here are for future execution of the revised code; the supplied final review separately reports earlier synthetic/CSV validation at `2dd30be`. They assume the repository root as the working directory. Use uv for setup and execution. This guide follows the retained configurations; the complete common settings now live in `configs/baseline.yaml`.
+Commands assume the repository root as the working directory. Use the managed setup below on an MI300X image with working ROCm PyTorch. Common settings live in `configs/baseline.yaml`; validation status is recorded in [implementation status](implementation_status.md).
 
 ## 1. Supply inputs and configure paths
 
@@ -12,87 +12,159 @@ When context or RGB will be evaluated, include its required timing/geometry meta
 
 ## 2. Prepare an environment
 
-Install uv separately, then resolve dependencies and select exactly one backend. The offline CPU acceptance setup is:
+The repository includes a resolved `uv.lock`. For local CPU verification:
 
 ```bash
-uv lock
 uv sync --locked --extra cpu --extra dev
-uv run --no-sync pytest -m "not slow"
-uv run --no-sync pytest -m slow
-# Create .env from .env.example only if it does not already exist.
+uv run --no-sync pytest
 ```
 
-Populate local credentials/resource paths as needed. No lockfile was fabricated during implementation. Subsequent commands use `--no-sync` so they do not implicitly install or change dependencies. One optional runner notebook and an offline CPU pytest suite are available. The reviewer reports 48 original cases passing; newly added tests have not been run and their duration remains unmeasured.
+Use the `cpu` extra for a project-owned CPU environment. Optional extras are `rgb`, `lexical`, `semantic`,
+`notebooks`, and `dev`; include the desired extras together in the sync command.
+Never use `--all-extras`. Later commands use `--no-sync` to avoid implicit changes.
 
-### AMD and backend selection
+### AMD MI300X: preserve the preinstalled ROCm environment
 
-`pyproject.toml` declares mutually exclusive `cpu`, `rocm` and `cuda` extras, using explicit torch/torchvision indexes with suffixes `cpu`, `rocm7.2` and `cu130`. These are proposed choices with compatibility still unverified. Before resolution, check the intended host's GPU architecture, OS, driver/ROCm version and supported wheel pair; adjust the dependency declaration deliberately if needed and retain the real lockfile.
-
-After `uv lock`, choose the AMD environment with:
+Use the Python interpreter that already imports the droplet's working ROCm torch.
+The managed path does not use a backend extra or project `uv sync`. Record the
+original environment and constrain the existing torch packages before installing:
 
 ```bash
-uv sync --locked --extra rocm
+export ISL_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+mkdir -p artifacts/environment
+uv pip freeze --python "$ISL_PYTHON" > artifacts/environment/managed-before.txt
+"$ISL_PYTHON" - <<'HOST'
+import importlib.metadata as metadata
+import json
+from pathlib import Path
+import torch
+if torch.version.hip is None or not torch.cuda.is_available():
+    raise SystemExit("Select the interpreter with working ROCm torch first")
+packages = {}
+for name in ("torch", "torchvision"):
+    try:
+        packages[name] = metadata.version(name)
+    except metadata.PackageNotFoundError:
+        pass
+root = Path("artifacts/environment")
+(root / "managed-torch.txt").write_text("".join(f"{name}=={version}\n" for name, version in packages.items()))
+(root / "managed-backend.json").write_text(json.dumps({"packages": packages,
+    "hip": torch.version.hip, "cuda": torch.version.cuda, "device": torch.cuda.get_device_name(0)}, indent=2))
+HOST
+uv pip install --python "$ISL_PYTHON" -c artifacts/environment/managed-torch.txt -e ".[dev]"
+uv pip freeze --python "$ISL_PYTHON" > artifacts/environment/managed-after.txt
 ```
 
-Use `--extra cpu` or `--extra cuda` for the other declared backends. Do not combine backend extras or use `--all-extras`. Include all needed optional extras in the same sync: `rgb` for video access, `lexical` for spaCy, `semantic` for BERTScore, `notebooks` for JupyterLab/ipykernel, and `dev` for pytest. The baseline CLI and regex lexical path need none of those optional resources.
-
-On ROCm, PyTorch uses the `torch.cuda` API; `runtime.device: cuda` requires the GPU, while `auto` can fall back to CPU. Reports expose `torch.version.hip`. The baseline stays FP32 with `recurrent_fp32: true`; packed recurrence stays outside autocast even in mixed-precision experiments. The explicit probe in step 3 reports FP32/BF16/FP16 forward/backward results and backend information. Successful probing precedes any precision change and does not establish full model correctness. BF16 support is checked; FP16 is unsupported on CPU and uses scaling on GPU.
-
-`runtime.determinism_mode: strict` remains default. `warn` is an explicit debugging mode. NVIDIA workspace setup occurs before CUDA use; HIP workspace/recurrent behavior needs its own host checks. Keep measured backend/package inventory, seed, resolved configuration and lockfile together. Precision, batch/frame limits or resampling changes require a named experiment and fresh run directory; do not change a resumed trajectory to bypass compatibility checks. A wall-time budget saves at accumulation boundaries and does not allocate hardware.
-
-References: [uv PyTorch integration](https://docs.astral.sh/uv/guides/integration/pytorch/) and [PyTorch HIP semantics](https://docs.pytorch.org/docs/stable/notes/hip.html).
-
-### Credentials and local assets
-
-Create private `.env` from `.env.example` only if it does not already exist. Set `HF_TOKEN` there or in the process environment; the template also declares `HF_HOME`, `NLTK_DATA` and tokenizer parallelism. Credentials stay out of YAML, notebook outputs, checkpoints and logs.
-
-The shared template sets no NVIDIA workspace variable. Remove an old copied `CUBLAS_WORKSPACE_CONFIG` entry when configuring ROCm; runtime applies NVIDIA policy only on a non-HIP build.
-
-Add `--env-file .env` to commands needing these settings. Ordinary model loading uses local assets. Only explicit `prepare-model --allow-network` obtains project model weights; dataset acquisition and optional language resources have separate preparation commands below. See [local storage layout](data_contracts.md#local-storage-layout) for placement.
-
-## Notebook workflow
-
-The [single pipeline notebook](../notebooks/run_pipeline.ipynb) runs the same commands described below. It contains no separate model or training implementation. Before launching it, set up the backend with the `notebooks` extra and prepare the local `.env` file:
+If resolution cannot retain the constrained versions, resolve that incompatibility
+before continuing. Do not replace the host torch build to make installation pass.
+The package supports Python 3.11 and 3.12. Check the installed requirements:
 
 ```bash
-uv lock
-uv sync --locked --extra rocm --extra notebooks
-uv run --no-sync --env-file .env jupyter lab notebooks/run_pipeline.ipynb
+"$ISL_PYTHON" -c 'import json; from isl_slt.utils.environment import check_managed_environment; print(json.dumps(check_managed_environment(), indent=2))'
 ```
 
-Replace `rocm` with `cpu` or the configured `cuda` backend as appropriate. Include all required optional experiment extras in the same sync command.
+Create `.env` from `.env.example` if absent, populate `HF_TOKEN` privately, and set
+`chmod 600 .env`. Existing credentials must stay out of logs, YAML and commits.
+The shared template contains no `CUBLAS_WORKSPACE_CONFIG`; remove it from older
+local copies on AMD. Runtime only applies that setting on non-HIP builds.
 
-Select the project's `.venv` interpreter. In VS Code, use **Select Kernel → Python Environments → .venv/bin/python**. If JupyterLab does not offer the project interpreter, register it explicitly later, then select **ISL SLT (uv)**:
+Use this terminal helper for the commands below on the managed droplet. It loads
+`.env`, explicitly selects the existing interpreter, and disables synchronization:
 
 ```bash
-uv run --no-sync python -m ipykernel install --user --name isl-slt --display-name "ISL SLT (uv)"
+isl() {
+  uv run --no-project --no-sync --no-python-downloads --python "$ISL_PYTHON" \
+    --env-file .env "$ISL_PYTHON" -m isl_slt "$@"
+}
+isl env-check --config configs/amd_fp32.yaml
+isl plan --config configs/amd_fp32.yaml
 ```
 
-The notebook resolves the repository from the root or `notebooks/` working directory. The default uv mode requires the project kernel; `RUNNER="managed"` validates the host Python/packages/backend instead. See [managed setup](#managed-colabkaggle-setup). Change `CONFIG_PATH` in its configuration cell; derived run/checkpoint/output paths follow the selected config. An optional seed override mirrors the CLI's `seed-<seed>` directory convention.
-
-Every CLI cell starts with `execute=False` and only prints its argument list as a readable command. Set it to `True` for the stage you intend to execute. Model downloads also require `allow_network=True`; notebook cells never install dependencies. The uv runner loads `.env` without displaying it; managed mode inherits the kernel environment. Subprocess output is streamed into the cell, nonzero exits raise errors, and kernel interruption stops the running subprocess group on POSIX.
-
-Audit, inspect the report, freeze splits and check leakage before preparing features and training. Execute either fresh training or resume as appropriate. For a resumable time limit, configure `runtime.wall_time_seconds`; an interrupted cell may leave only a previously saved checkpoint.
-
-Notebook evaluation uses `runs/<experiment>/evaluation/<checkpoint-stem>/<partition>/`, with the seed subdirectory when selected, so differently named checkpoints have separate outputs. Set `DECODING_FILE` when a checkpoint needs an explicit saved validation selection, including averaged weights. Changing config/seed/partition requires rerunning the configuration/helper cells. Missing saved reports are displayed as absent rather than replaced with example values.
-
-The notebook is stored with empty outputs and null execution counts. Future verification should cover opening it from both working directories, baseline and local-hand path selection, preview behavior, missing inputs/model assets, a failing subprocess, interruption, matching resume and reference-isolated evaluation. None of these notebook scenarios has been executed.
-
-This kernel setup follows [uv's Jupyter guidance](https://docs.astral.sh/uv/guides/integration/jupyter/).
-
-### Managed Colab/Kaggle setup
-
-Keep the managed host's torch build. During future authorized setup, install uv separately, clone the repository and install the package into the active host interpreter:
+For every later `uv run --no-sync python -m isl_slt ...` example, use `isl ...`
+on this managed host. Acquisition similarly uses the existing interpreter:
 
 ```bash
-uv pip install --system -e ".[notebooks]"
+uv run --no-project --no-sync --no-python-downloads --python "$ISL_PYTHON" \
+  --env-file .env "$ISL_PYTHON" scripts/fetch_isign.py --help
 ```
 
-Choose no backend extra for this managed installation. The notebook checks Python, required package versions and the host torch build; the explicit `env-check` stage probes recurrent behavior. Resolve incompatibilities deliberately without silently replacing torch. Open the notebook with the managed kernel and set `RUNNER="managed"`; subprocesses use its `sys.executable`. Supply `HF_TOKEN` through the platform environment/secret facility; managed mode does not read local `.env`.
+ROCm uses PyTorch's `cuda` device/API name. AMD configurations require the GPU
+instead of silently falling back to CPU. FP32 recurrence stays outside autocast.
+`env-check` exercises a packed bidirectional LSTM and random local tiny T5 in
+FP32/BF16/FP16, without downloading weights. A failed configured precision exits
+with an error. Strict determinism remains enabled; do not switch to warn mode to
+silently bypass a missing deterministic kernel.
 
-For Colab, mount Drive with platform controls or a future mount cell and keep the checkout plus `data/`, `splits/`, `artifacts/` and `runs/` on persistent storage. For Kaggle, use writable persistent/exported storage and reference read-only input mounts through absolute paths in an ignored local YAML override. Set data/cache/split/run paths before auditing, then open from the checkout or `notebooks/`.
+### GPU installation boundary
 
-No installer, clone or mount command executes automatically from the runner. Generate a real lock in the later setup phase and retain the actual managed package inventory. Do not fabricate a managed requirements export from an unresolved environment. Managed GPU/package compatibility remains unverified.
+The committed lock verifies the CPU environment and ordinary dependencies. The
+previous unverified `rocm`/`cuda` installer extras have been removed. GPU runs use
+managed mode and the host's working PyTorch pair. The ROCm wheel index can require
+multi-gigabyte downloads just to resolve metadata; it is not part of this lock.
+If provisioning a fresh GPU image, install a driver-compatible pair using the
+vendor's instructions first, then follow the constrained managed setup above.
+
+### FP32 versus BF16 validation pilot
+
+First supply the real inputs, revisions, frozen source-held-out splits, prepared
+pose features and local T5 assets described below. Both pilots share them. Each
+runs one frozen-adapter epoch and one joint epoch, seed 42, batch size 32,
+accumulation 2, eight workers, and fixed greedy decoding. The LSTM remains FP32.
+Run FP32 first; only continue to BF16 after both environment checks succeed:
+
+```bash
+isl env-check --config configs/amd_fp32_pilot.yaml > artifacts/environment/fp32-probe.json &&
+isl train --config configs/amd_fp32_pilot.yaml &&
+isl env-check --config configs/amd_bf16_pilot.yaml > artifacts/environment/bf16-probe.json &&
+isl train --config configs/amd_bf16_pilot.yaml
+```
+
+BF16 training/resume also reruns preflight automatically and records
+`env-check.json` in its run directory. A failed FP16 probe does not prevent a
+successful FP32/BF16 configuration. Use fresh run directories; never resume a
+trajectory under a different precision.
+
+Evaluate both final checkpoints on the same validation partition:
+
+```bash
+for pilot in amd_fp32_pilot amd_bf16_pilot; do
+  run="runs/${pilot//_/-}"
+  isl evaluate --config "configs/$pilot.yaml" --checkpoint "$run/checkpoints/last.pt" \
+    --partition validation --output "$run/comparison-validation"
+  uv run --no-project --no-sync --no-python-downloads --python "$ISL_PYTHON" \
+    --env-file .env "$ISL_PYTHON" scripts/summarize_run.py "$run" --output "$run/throughput.json"
+done
+```
+
+Compare validation BLEU, chrF++ and WER, per-stage completed-epoch throughput
+(including input loading), validation time and peak GPU memory. Update throughput
+alone excludes input loading. BF16 remains an opt-in experiment; two epochs are
+a compatibility/performance comparison, not evidence of final translation quality.
+Keep the full FP32 baseline until you have reviewed these measurements. Test/gold
+partitions are not used to select precision.
+
+### Notebook workflow and managed Colab/Kaggle setup
+
+The [pipeline notebook](../notebooks/run_pipeline.ipynb) calls the same CLI and
+ships with preview defaults and empty outputs. Set `RUNNER="managed"` and select
+the host interpreter on a managed ROCm, Colab or Kaggle image. Install the
+`notebooks` extra together with `dev` in the constrained managed install above.
+Launch Jupyter through the same environment loader so the managed kernel inherits
+`.env` without displaying it:
+
+```bash
+uv run --no-project --no-sync --no-python-downloads --python "$ISL_PYTHON" \
+  --env-file .env "$ISL_PYTHON" -m jupyter lab notebooks/run_pipeline.ipynb
+```
+
+For a project-owned kernel, use `uv sync --locked --extra cpu --extra notebooks`,
+then launch with `uv run --no-sync --env-file .env jupyter lab notebooks/run_pipeline.ipynb`
+and set `RUNNER="uv"`.
+The notebook resolves the checkout from its root or `notebooks/`. Change
+`CONFIG_PATH`, rerun helper cells, inspect printed commands, and enable only the
+stages you intend to execute. Downloads require explicit network opt-in. Managed
+mode inherits its kernel environment and does not load `.env` itself. Preserve
+persistent data/run storage and immutable memberships on hosted notebook systems.
 
 ## 3. Probe and inspect the resolved plan
 
@@ -104,7 +176,7 @@ uv run --no-sync python -m isl_slt train --config configs/baseline.yaml --dry-ru
 
 `env-check` executes synthetic recurrent forward/backward probes. `plan` and `--dry-run` print configuration/planning information without loading datasets or models. A printed plan does not validate files, cache contents, losses or convergence.
 
-The environment check also constructs a tiny random T5 locally and probes forward/backward plus repeated greedy generation for each precision. No weights are downloaded. Reports separate recurrent and T5 outcomes; the CLI fails when the configured precision fails either. Probe success is preliminary host evidence, not a convergence or reproducibility guarantee for the full model. Tested backend pins and a genuine `uv.lock` (review task 10) remain deferred until dependency resolution is authorized.
+The environment check also constructs a tiny random T5 locally and probes forward/backward plus repeated greedy generation for each precision. No weights are downloaded. Reports separate recurrent and T5 outcomes; the CLI fails when the configured precision fails either. Probe success is preliminary host evidence, not a convergence or reproducibility guarantee for the full model. The committed CPU lock is verified separately from the managed GPU environment; successful GPU execution must be recorded on the target host.
 
 ## 4. Audit and freeze membership
 

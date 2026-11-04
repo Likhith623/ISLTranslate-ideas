@@ -265,22 +265,20 @@ def prepare_model(config: Config, allow_network: bool) -> dict:
             write_json(directory / "asset.json", metadata, immutable=True)
         results["t5"] = metadata
     if config.rgb.mode != "off":
-        import hashlib
         import urllib.request
-        from isl_slt.utils.io import atomic_open
+        from isl_slt.utils.io import atomic_open, stream_identity
         path = Path(config.rgb.weights_path)
         if not path.exists():
-            digest = hashlib.sha256()
             with urllib.request.urlopen("https://download.pytorch.org/models/resnet18-f37072fd.pth") as response:
                 with atomic_open(path) as stream:
-                    while chunk := response.read(1024 * 1024):
-                        digest.update(chunk)
-                        stream.write(chunk)
-                    if not digest.hexdigest().startswith("f37072fd"):
+                    digest = stream_identity(response, destination=stream)["sha256"]
+                    if not digest.startswith("f37072fd"):
                         raise ValueError("ResNet18 download hash-prefix check failed")
-        if not file_hash(path).startswith("f37072fd"):
+        else:
+            digest = file_hash(path)
+        if not digest.startswith("f37072fd"):
             raise ValueError("Local ResNet18 weights do not match the documented initializer")
-        results["rgb"] = {"revision": config.rgb.revision, "sha256": file_hash(path)}
+        results["rgb"] = {"revision": config.rgb.revision, "sha256": digest}
     return results
 
 

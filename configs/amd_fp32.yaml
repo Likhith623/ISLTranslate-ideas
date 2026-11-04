@@ -1,0 +1,11 @@
+extends: baseline.yaml
+experiment: amd-fp32
+run_dir: runs/amd-fp32
+data:
+  workers: 8
+runtime:
+  device: cuda
+  precision: fp32
+  recurrent_fp32: true
+  deterministic: true
+  determinism_mode: strict

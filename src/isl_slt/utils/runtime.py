@@ -29,7 +29,7 @@ def device_for(runtime: Runtime) -> torch.device:
     if name == "auto":
         name = "cpu"
     if name == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("GPU PyTorch is unavailable; install the appropriate uv backend extra")
+        raise RuntimeError("GPU PyTorch is unavailable; select the managed interpreter with a working GPU build")
     return torch.device(name)
 
 
@@ -124,6 +124,10 @@ def environment_report(runtime: Runtime) -> dict:
                     output, _ = torch.nn.utils.rnn.pad_packed_sequence(output, batch_first=True)
                 output.float().sum().backward()
             synchronize(device)
+            gradients = [p.grad for p in (*layer.parameters(), *projection.parameters()) if p.grad is not None]
+            if (not bool(torch.isfinite(output).all()) or not gradients or
+                any(not bool(torch.isfinite(gradient).all()) for gradient in gradients)):
+                raise RuntimeError("Packed LSTM produced nonfinite outputs/gradients or no gradients")
             report["probes"][precision] = {"ok": True, "projection_dtype": str(values.dtype),
                                            "recurrent_output_dtype": str(output.dtype),
                                            "operation": "two-layer packed bidirectional LSTM forward/backward"}

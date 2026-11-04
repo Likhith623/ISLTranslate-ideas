@@ -7,6 +7,7 @@ import os
 import platform
 import subprocess
 import tempfile
+import zlib
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -40,11 +41,30 @@ def fingerprint(value: Any) -> str:
 
 
 def file_hash(path: str | Path) -> str:
-    digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+        return stream_identity(stream)["sha256"]
+
+
+def stream_identity(source, *, destination=None, max_bytes=None, on_progress=None) -> dict:
+    """Hash/count a binary stream, optionally copying it. Caller owns both streams.
+
+    Read at most one byte past the bound and reject it before writing. Callers
+    validate expected checksums inside atomic_open before publishing the result.
+    """
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError("max_bytes must be nonnegative")
+    size, crc, digest = 0, 0, hashlib.sha256()
+    while block := source.read(1024 * 1024 if max_bytes is None else min(1024 * 1024, max_bytes - size + 1)):
+        size += len(block)
+        if max_bytes is not None and size > max_bytes:
+            raise OSError("Stream exceeds declared size")
+        if destination is not None:
+            destination.write(block)
+        digest.update(block)
+        crc = zlib.crc32(block, crc)
+        if on_progress is not None:
+            on_progress(size)
+    return {"bytes": size, "crc32": crc & 0xffffffff, "sha256": digest.hexdigest()}
 
 
 class HashSession:

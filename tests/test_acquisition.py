@@ -14,12 +14,25 @@ from isl_slt.data.archives import ArchivePart, RangeFile, StagedParts
 
 
 @contextmanager
-def range_server(payloads, honor_ranges=True):
+def range_server(payloads, honor_ranges=True, *, log=None, redirect_to=None, failures=None):
     transferred = []
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
         def log_message(self, *args):
             pass
         def do_GET(self):
+            if log is not None:
+                log.append({"peer": self.client_address, "authorization": self.headers.get("Authorization"),
+                            "range": self.headers.get("Range")})
+            if redirect_to or failures:
+                code = 302 if redirect_to else failures.pop(0)
+                self.send_response(code)
+                if redirect_to:
+                    self.send_header("Location", redirect_to + "/0")
+                self.send_header("Content-Length", "0")
+                self.send_header("Retry-After", "0")
+                self.end_headers()
+                return
             data = payloads[int(self.path.strip("/"))]
             header = self.headers.get("Range")
             if header and honor_ranges:
@@ -164,3 +177,75 @@ def test_staging_cleans_only_owned_stale_files_after_lock(tmp_path):
     with StagedParts([], [], staging):
         assert not stale.exists() and not partial.exists()
         assert keep.exists()
+
+
+def test_pool_reuses_connection_and_strips_cross_origin_token():
+    from isl_slt.data.archives import ArchiveHTTP
+    cdn_log, hub_log = [], []
+    with range_server([b"abc"], log=cdn_log) as (cdn, _):
+        with range_server([b""], log=hub_log, redirect_to=cdn) as (hub, _):
+            with ArchiveHTTP("synthetic-token") as client:
+                with RangeFile(hub + "/0", 3, client=client) as stream:
+                    assert stream.read(1) == b"a"
+                    assert stream.read(1) == b"b"
+    assert len({row["peer"] for row in hub_log}) == 1
+    assert len({row["peer"] for row in cdn_log}) == 1
+    assert all(row["authorization"] == "Bearer synthetic-token" for row in hub_log)
+    assert all(row["authorization"] is None for row in cdn_log)
+
+
+def test_transient_retry_is_bounded_and_errors_are_sanitized(monkeypatch):
+    from isl_slt.data import archives
+    monkeypatch.setattr(archives.time, "sleep", lambda delay: None)
+    log = []
+    with range_server([b"abc"], log=log, failures=[429, 503]) as (url, _):
+        with RangeFile(url + "/0", 3) as stream:
+            assert stream.read(3) == b"abc"
+    assert len(log) == 3
+    log = []
+    with range_server([b"abc"], log=log, failures=[503] * 4) as (url, _):
+        with RangeFile(url + "/0?signature=private", 3) as stream:
+            with pytest.raises(OSError, match="HTTP 503") as error:
+                stream.read(1)
+    assert len(log) == 3
+    assert "signature" not in str(error.value)
+
+
+def test_selected_windows_merge_reads_across_parts_without_unused_body(tmp_path, record_factory):
+    memory = io.BytesIO()
+    selected = [record_factory(f"wanted-{i}") for i in range(20)]
+    with zipfile.ZipFile(memory, "w") as archive:
+        for record in selected:
+            archive.writestr(record.uid + ".pose", bytes([len(record.uid)]) * 5000)
+        archive.writestr("unused.pose", b"x" * 2_000_000)
+    payload = memory.getvalue()
+    payloads = [payload[:43000], payload[43000:]]
+    log = []
+    from isl_slt.data.archives import ArchiveHTTP
+    with range_server(payloads, log=log) as (url, transferred), ArchiveHTTP() as client:
+        parts = [ArchivePart(str(i), len(data), {"size": len(data)},
+                 lambda i=i: RangeFile(f"{url}/{i}", len(payloads[i]), client=client))
+                 for i, data in enumerate(payloads)]
+        result = extract_selected(parts, selected, tmp_path / "out", inspect_sample=False)
+        assert len(result["files"]) == 20
+        assert len(log) < 15  # Index plus two selected windows, rather than 3+ reads per clip.
+        assert sum(transferred) < 250_000
+    assert (tmp_path / "out/wanted-19.pose").read_bytes() == bytes([len("wanted-19")]) * 5000
+
+
+def test_cache_stays_bounded_and_range_truncation_is_rejected(tmp_path):
+    memory = io.BytesIO()
+    with zipfile.ZipFile(memory, "w") as archive:
+        archive.writestr("large.pose", b"x" * (13 * 1024**2))
+    path = tmp_path / "archive.zip"
+    path.write_bytes(memory.getvalue())
+    with MultipartReader([path]) as combined, zipfile.ZipFile(combined) as archive:
+        combined.select_members(archive, ["large.pose"])
+        with archive.open("large.pose") as source:
+            while source.read(1024**2):
+                assert sum(map(len, combined.cache.values())) <= 8 * 1024**2
+        assert len(combined.cache) <= 2
+    with range_server([b"short"]) as (url, _):
+        with RangeFile(url + "/0", 10) as stream:
+            with pytest.raises(OSError):
+                stream.read(10)

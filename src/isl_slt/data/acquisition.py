@@ -6,18 +6,16 @@ import os
 from pathlib import Path, PurePosixPath
 import stat
 import zipfile
-import hashlib
-import zlib
 from contextlib import ExitStack
 
 from isl_slt.config import Features, load_config
 from isl_slt.data.manifests import Record, adapt_csv, load_manifest
 from isl_slt.data.pose import decode_pose
 from isl_slt.features.pose import selected_joints
-from isl_slt.utils.io import atomic_open, directory_lock, file_hash, fingerprint, read_json, write_json
+from isl_slt.utils.io import atomic_open, directory_lock, file_hash, fingerprint, read_json, stream_identity, write_json
 
 
-from isl_slt.data.archives import ArchivePart, MultipartReader, RangeFile, StagedParts
+from isl_slt.data.archives import ArchiveHTTP, ArchivePart, MultipartReader, RangeFile, StagedParts
 
 
 def pose_index(archive: zipfile.ZipFile) -> dict:
@@ -115,7 +113,7 @@ def annotation_request(config, path, dataset="target"):
     return adapt_csv(adapter)
 
 
-def remote_parts(repo, revision, token=None):
+def remote_parts(repo, revision, token=None, *, client=None):
     from huggingface_hub import HfApi, hf_hub_url
     info = HfApi(token=token).dataset_info(repo, revision=revision, files_metadata=True)
     files = {row.rfilename: row for row in info.siblings}
@@ -130,19 +128,14 @@ def remote_parts(repo, revision, token=None):
         sha = lfs.get("sha256") if isinstance(lfs, dict) else getattr(lfs, "sha256", None)
         identity = {"repository": repo, "revision": info.sha, "name": name, "size": row.size,
                     "blob_id": row.blob_id, "sha256": sha}
-        parts.append(ArchivePart(name, row.size, identity, lambda url=url, size=row.size: RangeFile(url, size, token)))
+        parts.append(ArchivePart(name, row.size, identity, lambda url=url, size=row.size: RangeFile(url, size, token, client=client)))
         urls.append(url)
     return parts, urls
 
 
 def file_identity(path):
-    size, crc, digest = 0, 0, hashlib.sha256()
     with Path(path).open("rb") as stream:
-        while block := stream.read(1024 * 1024):
-            size += len(block)
-            crc = zlib.crc32(block, crc)
-            digest.update(block)
-    return {"bytes": size, "crc32": crc & 0xffffffff, "sha256": digest.hexdigest()}
+        return stream_identity(stream)
 
 
 def extract_selected(parts, records, output, *, settings=None, max_bytes=50 * 1024**3,
@@ -193,6 +186,7 @@ def extract_selected(parts, records, output, *, settings=None, max_bytes=50 * 10
                 journal["files"][record.uid] = {"uid": record.uid, "member": expected["member"], "path": str(target), **actual}
                 reused.append(record.uid)
         write_json(journal_path, journal)
+        combined.select_members(archive, [row["member"] for row in selected.values()])
         first = selected[records[0].uid]
         if first["bytes"] > 512 * 1024**2:
             raise ValueError("Sample pose exceeds inspection memory bound")
@@ -204,17 +198,12 @@ def extract_selected(parts, records, output, *, settings=None, max_bytes=50 * 10
             if record.uid in journal["files"]:
                 written.append(journal["files"][record.uid])
                 continue
-            count, crc, digest = 0, 0, hashlib.sha256()
-            with archive.open(selected[record.uid]["member"]) as source, atomic_open(target) as stream:
-                while block := source.read(1024 * 1024):
-                    stream.write(block)
-                    count += len(block)
-                    crc = zlib.crc32(block, crc)
-                    digest.update(block)
-                if count != selected[record.uid]["bytes"] or crc & 0xffffffff != selected[record.uid]["crc32"]:
+            expected = selected[record.uid]
+            with archive.open(expected["member"]) as source, atomic_open(target) as stream:
+                identity = stream_identity(source, destination=stream, max_bytes=expected["bytes"])
+                if identity["bytes"] != expected["bytes"] or identity["crc32"] != expected["crc32"]:
                     raise ValueError(f"Extracted member size/CRC mismatch: {record.uid}")
-            entry = {"uid": record.uid, "member": selected[record.uid]["member"], "path": str(target),
-                     "bytes": count, "crc32": crc & 0xffffffff, "sha256": digest.hexdigest()}
+            entry = {"uid": record.uid, "member": expected["member"], "path": str(target), **identity}
             journal["files"][record.uid] = entry
             write_json(journal_path, journal)
             written.append(entry)
@@ -270,11 +259,12 @@ def fetch_main(argv=None):
             else:
                 if not args.allow_network:
                     parser.error("Remote planning/fetching requires --allow-network")
-                parts, urls = remote_parts(args.repo, args.revision, os.environ.get("HF_TOKEN"))
+                client = stack.enter_context(ArchiveHTTP(os.environ.get("HF_TOKEN")))
+                parts, urls = remote_parts(args.repo, args.revision, os.environ.get("HF_TOKEN"), client=client)
                 if args.transport == "staged":
                     print(json.dumps({"staged_part_peak_bound_bytes": sum(sorted((p.size for p in parts), reverse=True)[:2]),
                                       "notice": "Explicit staged fallback downloads archive parts; final part is indexed first."}), flush=True)
-                    staging = stack.enter_context(StagedParts(parts, urls, args.staging_dir, os.environ.get("HF_TOKEN")))
+                    staging = stack.enter_context(StagedParts(parts, urls, args.staging_dir, client=client))
                     parts = [ArchivePart(p.name, p.size, p.identity, lambda i=i: staging.open(i)) for i, p in enumerate(parts)]
             records, plan = plan_selection(parts, records, target_records=target,
                                            budget_bytes=args.budget_bytes, seed=args.selection_seed)

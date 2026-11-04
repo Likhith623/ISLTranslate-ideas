@@ -10,6 +10,21 @@ import pytest
 from isl_slt.data.manifests import Record
 
 
+@pytest.fixture
+def count_file_hash_calls(monkeypatch):
+    """Start counting explicitly, after fixtures have hashed their input assets."""
+    from isl_slt.utils import io
+    original = io.file_hash
+    def start():
+        calls = []
+        def counted(path):
+            calls.append(str(path))
+            return original(path)
+        monkeypatch.setattr(io, "file_hash", counted)
+        return calls
+    return start
+
+
 @pytest.fixture(autouse=True)
 def cpu_threads():
     import torch

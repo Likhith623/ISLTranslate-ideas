@@ -1,0 +1,14 @@
+extends: amd_fp32.yaml
+experiment: amd-fp32-pilot
+run_dir: runs/amd-fp32-pilot
+training:
+  seed: 42
+  max_target_epochs: 2
+  stages:
+    - {name: adapter, dataset: target, epochs: 1, freeze_t5: true, tune_rgb: false}
+    - {name: joint, dataset: target, epochs: 1, freeze_t5: false, tune_rgb: false}
+generation:
+  train_beams: [1]
+  beams: [1]
+evaluation:
+  metrics: [bleu, chrf, wer]

@@ -8,19 +8,14 @@ from isl_slt.data.dataset import dependencies_for
 import pytest
 
 
-def test_source_signatures_hash_each_asset_once(tmp_path, record_factory, monkeypatch):
+def test_source_signatures_hash_each_asset_once(record_factory, count_file_hash_calls):
     records = []
     for number in range(200):
         record = record_factory(f"parent-{number}", split="train")
         Path(record.pose_path).write_bytes(str(number).encode())
         record.asset_hashes = {"pose": io.file_hash(record.pose_path)}
         records.append(record)
-    calls = []
-    original = io.file_hash
-    def counted(path):
-        calls.append(str(path))
-        return original(path)
-    monkeypatch.setattr(io, "file_hash", counted)
+    calls = count_file_hash_calls()
     index, session = SourceIndex(records), SignatureSession()
     for record in records:
         for dependency in index.dependencies(record):

@@ -24,6 +24,16 @@ Use the same experiment's configuration for feature preparation, training and ev
 | `attention_lstm.yaml` | Attention-LSTM decoder with training-only BPE instead of T5 | Training-only vocabulary fitting; no pretrained T5 initializer |
 | `diagnostics.yaml` | Paired input diagnostics with BLEU/chrF++/TER/WER | Baseline checkpoint; these metrics avoid optional language-resource requirements |
 
+## AMD precision experiments
+
+`amd_fp32.yaml` uses eight workers, strict determinism and FP32 recurrence with a
+required GPU. `amd_bf16.yaml` changes autocast precision only; recurrence stays FP32
+and training/resume requires a successful environment preflight. The matched
+`amd_fp32_pilot.yaml` and `amd_bf16_pilot.yaml` run two epochs each with fixed greedy
+validation. Follow the [pilot comparison](runbook.md#fp32-versus-bf16-validation-pilot)
+before using BF16 for a full experiment. Their distinct run directories prevent
+cross-precision resume. The shared baseline stays unchanged.
+
 ## Baseline and anatomy variants
 
 The baseline trains one T5-frozen adapter epoch and up to 19 joint epochs. Keep this schedule unchanged for direct anatomy comparisons. Example commands for the wrist-local variant, after baseline data/split/model preparation:
