@@ -2,25 +2,28 @@
 
 import math
 import random
+from pathlib import Path
 from dataclasses import dataclass
 
 import torch
 from torch.utils.data import Dataset, Sampler
 
 from isl_slt.config import Config
-from isl_slt.data.context import assemble_context
+from isl_slt.data.context import SourceIndex, assemble_context
 from isl_slt.data.lexical import BPETokenizer, Lexicon
 from isl_slt.data.manifests import Record
 from isl_slt.data.pose import read_pose
-from isl_slt.features.cache import read_features
+from isl_slt.features.cache import SignatureSession, cache_paths, read_features
 from isl_slt.features.pose import resample_sequence
-from isl_slt.utils.io import file_hash, fingerprint, read_json
+from isl_slt.features.statistics import apply_statistics, load_statistics
+from isl_slt.utils.io import fingerprint, read_json
 
 
 def dependencies_for(record: Record, records: list[Record], config: Config) -> list[Record]:
     if not config.context.enabled:
         return [record]
-    return [r for r in records if r.source_id == record.source_id and r.split == record.split]
+    index = records if isinstance(records, SourceIndex) else SourceIndex(records)
+    return index.dependencies(record, config.context)
 
 
 def raw_sequence(record: Record, records: list[Record], config: Config):
@@ -31,47 +34,69 @@ def raw_sequence(record: Record, records: list[Record], config: Config):
 
 class PoseDataset(Dataset):
     def __init__(self, records: list[Record], config: Config, lexicon: Lexicon | None = None,
-                 training: bool = False, preflight: bool = True, context_records: list[Record] | None = None):
+                 training: bool = False, preflight: bool | None = None, context_records: list[Record] | None = None):
         self.records, self.config, self.lexicon, self.training = records, config, lexicon, training
         self.epoch = 0
-        self.context_records = context_records if context_records is not None else records
-        self.lengths, self.input_dim, cache_identities, video_hashes = [], None, [], {}
+        preflight = config.data.verify_assets if preflight is None else preflight
+        self.statistics = load_statistics(config)
+        self.cache_files, self.rgb_initializer = {}, None
+        self.context_records = SourceIndex(context_records if context_records is not None else records)
+        self.signatures = SignatureSession()
+        self.lengths, self.input_dim, cache_identities = [], None, []
         for record in records:
-            prepared = read_features(config, record, dependencies_for(record, self.context_records, config), verify_assets=preflight)
+            artifact_paths = list(cache_paths(config, record))
+            prepared = read_features(config, record, dependencies_for(record, self.context_records, config),
+                                     verify_assets=preflight, signatures=self.signatures)
             self.lengths.append(len(prepared.times))
             if self.input_dim is not None and self.input_dim != prepared.values.shape[1]:
                 raise ValueError("Mixed feature dimensions in one dataset")
             self.input_dim = prepared.values.shape[1]
             cache_identity = {"key": record.key, "arrays": prepared.metadata["arrays_sha256"],
                               "dependencies": prepared.metadata["dependencies"]}
-            if config.rgb.mode == "cached" and preflight:
+            if config.rgb.mode == "cached":
                 from isl_slt.features.rgb import read_rgb, rgb_paths
-                read_rgb(config, record, dependencies_for(record, self.context_records, config), prepared.times)
+                read_rgb(config, record, dependencies_for(record, self.context_records, config), prepared.times,
+                         verify_assets=preflight, signatures=self.signatures)
                 _, rgb_metadata = rgb_paths(config, record)
                 cache_identity["rgb"] = read_json(rgb_metadata)
-            if config.rgb.mode != "off" and preflight:
+                initializer = cache_identity["rgb"]["signature"]["weights_sha256"]
+                if self.rgb_initializer is not None and self.rgb_initializer != initializer:
+                    raise ValueError("Mixed RGB initializer checksums in one dataset")
+                self.rgb_initializer = initializer
+                artifact_paths.extend(rgb_paths(config, record))
+            if config.rgb.mode != "off":
                 for dependency in dependencies_for(record, self.context_records, config):
                     if not dependency.video_path or dependency.image_transform is None:
                         raise ValueError(f"{dependency.uid}: RGB requires video and coordinate-transform metadata")
-                    if dependency.video_path not in video_hashes:
-                        video_hashes[dependency.video_path] = file_hash(dependency.video_path)
-                    actual = video_hashes[dependency.video_path]
-                    if dependency.asset_hashes.get("video", actual) != actual:
+                    expected_video = dependency.asset_hashes.get("video")
+                    if expected_video is None:
+                        raise ValueError("RGB requires audited video checksums")
+                    actual = self.signatures.hashes.hash(dependency.video_path) if preflight else expected_video
+                    if expected_video != actual:
                         raise ValueError(f"{dependency.uid}: video changed since immutable manifest creation")
                     cache_identity.setdefault("videos", {})[dependency.key] = actual
             cache_identities.append(cache_identity)
+            self.cache_files[record.key] = {str(path): self.file_state(path) for path in artifact_paths}
         self.cache_fingerprint = fingerprint(sorted(cache_identities, key=lambda row: row["key"]))
 
     def __len__(self):
         return len(self.records)
 
+    @staticmethod
+    def file_state(path):
+        status = Path(path).stat()
+        return status.st_size, status.st_mtime_ns, status.st_ino
+
     def __getitem__(self, index: int) -> dict:
         record = self.records[index]
-        prepared = read_features(self.config, record, verify_assets=False)
-        features = torch.from_numpy(prepared.values)
+        if any(self.file_state(path) != expected for path, expected in self.cache_files[record.key].items()):
+            raise ValueError(f"{record.uid}: cache artifact changed during dataset lifetime")
+        prepared = read_features(self.config, record, dependencies_for(record, self.context_records, self.config),
+                                 verify_assets=False, verify_arrays=False, signatures=self.signatures)
+        features = torch.from_numpy(apply_statistics(prepared, self.statistics))
         generator = torch.Generator().manual_seed(self.config.training.seed + self.epoch * 1000003 + index)
         if self.training and self.config.training.pose_noise_std:
-            # Only observed position channels receive small noise; masks and RGB vectors are untouched.
+            # Position-valid normalized/standardized feature channels only; derived motion/anatomy stay fixed.
             joints = prepared.observed.shape[1]
             mask = torch.from_numpy(prepared.position_valid).repeat_interleave(2, dim=1)
             features[:, :joints * 2] += torch.randn(features[:, :joints * 2].shape, generator=generator) * mask * self.config.training.pose_noise_std
@@ -81,7 +106,8 @@ class PoseDataset(Dataset):
         if self.config.rgb.mode == "cached":
             from isl_slt.features.rgb import read_rgb
             item["rgb"], item["rgb_mask"] = read_rgb(self.config, record,
-                dependencies_for(record, self.context_records, self.config), prepared.times, verify_assets=False)
+                dependencies_for(record, self.context_records, self.config), prepared.times,
+                verify_assets=False, verify_arrays=False, signatures=self.signatures)
         elif self.config.rgb.mode == "images":
             from isl_slt.features.rgb import load_crops
             item["images"], item["rgb_mask"] = load_crops(record, self.context_records,
@@ -109,6 +135,11 @@ class Batch:
     records: list[Record]
     labels: torch.Tensor | None = None
     lexical: torch.Tensor | None = None
+
+    def pin_memory(self):
+        return Batch({key: value.pin_memory() for key, value in self.visual.items()}, self.records,
+                     self.labels.pin_memory() if self.labels is not None else None,
+                     self.lexical.pin_memory() if self.lexical is not None else None)
 
     def to(self, device: torch.device):
         # Keep lengths on CPU for pack_padded_sequence, including ROCm.

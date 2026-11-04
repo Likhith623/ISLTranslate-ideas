@@ -9,7 +9,7 @@ from torch import nn
 from isl_slt.config import Config
 from isl_slt.data.manifests import Record
 from isl_slt.data.pose import PoseSequence
-from isl_slt.features.cache import preprocessing_fingerprint, record_signature
+from isl_slt.features.cache import preprocessing_fingerprint
 from isl_slt.utils.io import atomic_open, file_hash, fingerprint, read_json, write_json
 
 
@@ -66,7 +66,9 @@ def load_crops(center: Record, source_records: list[Record], sequence: PoseSeque
     views = 3 if config.rgb.hand_crops else 1
     images = np.zeros((len(sequence.times), views, config.rgb.crop_size, config.rgb.crop_size, 3), np.uint8)
     masks = np.zeros((len(sequence.times), views), bool)
-    relevant = [r for r in source_records if r.source_id == center.source_id and r.split == center.split]
+    from isl_slt.data.context import SourceIndex
+    indexed = source_records if isinstance(source_records, SourceIndex) else SourceIndex(source_records)
+    relevant = indexed.dependencies(center, config.context) if config.context.enabled else [center]
     if not config.context.enabled:
         relevant = [center]
     owners = []
@@ -149,18 +151,28 @@ class RGBEncoder(nn.Module):
         return torch.cat(outputs).reshape(*shape, 512)
 
 
-def rgb_signature(config: Config, center: Record, dependencies: list[Record]) -> dict:
+def rgb_signature(config: Config, center: Record, dependencies: list[Record],
+                  verify_assets: bool = True, weights_sha256: str | None = None, signatures=None) -> dict:
+    from isl_slt.features.cache import SignatureSession
+    signatures = signatures or SignatureSession()
     dependency_signatures = []
     for record in sorted(dependencies, key=lambda r: r.key):
         if not record.video_path or record.image_transform is None:
             raise ValueError(f"{record.uid}: RGB requires video and verified coordinate-transform metadata")
-        video_hash = file_hash(record.video_path)
+        if "video" not in record.asset_hashes:
+            raise ValueError(f"{record.uid}: audited video checksum is required")
+        video_hash = signatures.hashes.hash(record.video_path) if verify_assets else record.asset_hashes["video"]
         if record.asset_hashes.get("video", video_hash) != video_hash:
             raise ValueError(f"{record.uid}: video bytes changed since immutable manifest creation")
-        dependency_signatures.append({**record_signature(record), "video_sha256": video_hash,
-                                      "image_transform": record.image_transform})
-    return {"version": "rgb-cache-v1", "pose_preprocessing": preprocessing_fingerprint(config),
-            "settings": config.rgb.model_dump(mode="json"), "weights_sha256": file_hash(config.rgb.weights_path),
+        signature = dict(signatures.signature(record, verify_assets))
+        if config.context.enabled:
+            signature.pop("source")
+        dependency_signatures.append({**signature, "video_sha256": video_hash, "image_transform": record.image_transform})
+    return {"version": "rgb-context-cache-v2" if config.context.enabled else "rgb-cache-v1",
+            **({"context_source": {"source": center.source_id, "partition": center.split}} if config.context.enabled else {}),
+            "pose_preprocessing": preprocessing_fingerprint(config),
+            "settings": config.rgb.model_dump(mode="json"),
+            "weights_sha256": signatures.hashes.hash(config.rgb.weights_path) if verify_assets else weights_sha256,
             "center": center.key, "dependencies": dependency_signatures}
 
 
@@ -171,19 +183,20 @@ def rgb_paths(config: Config, record: Record) -> tuple[Path, Path]:
 
 
 def write_rgb(config: Config, record: Record, dependencies: list[Record], values: np.ndarray,
-              masks: np.ndarray, times: np.ndarray) -> None:
+              masks: np.ndarray, times: np.ndarray, signatures=None) -> None:
     arrays, meta = rgb_paths(config, record)
     with atomic_open(arrays) as stream:
         np.savez_compressed(stream, values=values, masks=masks, times=times)
-    write_json(meta, {"signature": rgb_signature(config, record, dependencies), "sha256": file_hash(arrays)})
+    write_json(meta, {"signature": rgb_signature(config, record, dependencies, signatures=signatures), "sha256": file_hash(arrays)})
 
 
 def read_rgb(config: Config, record: Record, dependencies: list[Record], times: np.ndarray,
-             verify_assets: bool = True):
+             verify_assets: bool = False, verify_arrays: bool = True, signatures=None):
     arrays, meta = rgb_paths(config, record)
     metadata = read_json(meta)
-    incompatible_assets = verify_assets and metadata["signature"] != rgb_signature(config, record, dependencies)
-    if incompatible_assets or metadata["sha256"] != file_hash(arrays):
+    incompatible_assets = metadata["signature"] != rgb_signature(config, record, dependencies, verify_assets,
+                                                                metadata["signature"]["weights_sha256"], signatures)
+    if incompatible_assets or (verify_arrays and metadata["sha256"] != file_hash(arrays)):
         raise ValueError(f"{record.uid}: incompatible RGB cache; regenerate it explicitly")
     with np.load(arrays, allow_pickle=False) as loaded:
         if not np.array_equal(times, loaded["times"]):

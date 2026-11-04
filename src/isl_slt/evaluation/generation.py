@@ -4,8 +4,9 @@ import torch
 
 from isl_slt.config import Config
 from isl_slt.data.lexical import BPETokenizer
-from isl_slt.evaluation.metrics import score_predictions
+from isl_slt.evaluation.metrics import MetricResources, score_predictions
 from isl_slt.utils.runtime import autocast
+from isl_slt.utils.io import fingerprint
 
 
 def decode_tokens(tokenizer, tokens: torch.Tensor, limit: int) -> list[dict]:
@@ -33,28 +34,49 @@ def generate_loader(model, tokenizer, loader, config: Config, device: torch.devi
         decoded = decode_tokens(tokenizer, tokens, config.generation.max_new_tokens)
         for record, prediction, length in zip(batch.records, decoded, batch.visual["lengths"].tolist()):
             rows.append({"uid": record.uid, "source_id": record.source_id, "dataset": record.dataset_name,
+                         "clip_type": record.clip_type,
                          "references": [record.text], "interpreter_reference": record.interpreter_text,
                          "input_frames": length, "split": record.split, **prediction})
     return rows
 
 
-def score_rows(rows: list[dict], config: Config, metrics: list[str] | None = None) -> dict:
+def score_rows(rows: list[dict], config: Config, metrics: list[str] | None = None, resources=None) -> dict:
+    resources = resources or MetricResources()
     result = score_predictions([row["prediction"] for row in rows], [row["references"] for row in rows],
                                metrics or config.evaluation.metrics, config.evaluation.bertscore_model,
-                               config.evaluation.bertscore_revision)
+                               config.evaluation.bertscore_revision, resources)
     result["truncated_count"] = sum(row["truncated"] for row in rows)
+    result["by_clip_type"] = {}
+    for clip_type in ("sentence", "def", "unknown"):
+        subset = [row for row in rows if row.get("clip_type", "unknown") == clip_type]
+        identity = {"uid_count": len(subset), "uid_hash": fingerprint(sorted(row["uid"] for row in subset)),
+                    "source_count": len({row["source_id"] for row in subset})}
+        scores = score_predictions([row["prediction"] for row in subset], [row["references"] for row in subset],
+            metrics or config.evaluation.metrics, config.evaluation.bertscore_model,
+            config.evaluation.bertscore_revision, resources) if subset else {"scores": {}, "unavailable": {}, "status": "empty-subset"}
+        result["by_clip_type"][clip_type] = {**scores, **identity}
     gold = [row for row in rows if row.get("interpreter_reference") is not None]
     if gold:
+        uids = sorted(row["uid"] for row in gold)
+        if len(set(uids)) != len(uids):
+            raise ValueError("Gold scoring requires unique paired UIDs")
+        identity = {"uid_count": len(uids), "uid_hash": fingerprint(uids),
+                    "source_count": len({row["source_id"] for row in gold})}
+        result["transcript_on_gold_subset"] = score_predictions([row["prediction"] for row in gold],
+            [row["references"] for row in gold], metrics or config.evaluation.metrics,
+            config.evaluation.bertscore_model, config.evaluation.bertscore_revision, resources)
+        result["transcript_on_gold_subset"].update(identity)
         result["interpreter_diagnostic"] = score_predictions([row["prediction"] for row in gold],
             [[row["interpreter_reference"]] for row in gold], metrics or config.evaluation.metrics,
-            config.evaluation.bertscore_model, config.evaluation.bertscore_revision)
-        result["interpreter_diagnostic"]["source_count"] = len({row["source_id"] for row in gold})
+            config.evaluation.bertscore_model, config.evaluation.bertscore_revision, resources)
+        result["interpreter_diagnostic"].update(identity)
+        result["gold_subset_identity"] = identity
     return result
 
 
-def select_decoding(model, tokenizer, loader, config: Config, device: torch.device):
+def select_decoding(model, tokenizer, loader, config: Config, device: torch.device, candidate_beams=None):
     candidates = []
-    for beams in sorted(set(config.generation.beams)):
+    for beams in sorted(set(config.generation.beams if candidate_beams is None else candidate_beams)):
         rows = generate_loader(model, tokenizer, loader, config, device, beams)
         score = score_rows(rows, config, ["bleu", "chrf"])
         candidates.append((beams, score, rows))

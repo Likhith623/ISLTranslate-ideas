@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 .ipynb_checkpoints/
+.pytest_cache/
 *.py[cod]
 *.egg-info/
 build/
@@ -8,14 +9,10 @@ dist/
 .env
 .env.*
 !.env.example
-/data/*
-!/data/README.md
-/splits/*
-!/splits/README.md
-/artifacts/*
-!/artifacts/README.md
-/runs/*
-!/runs/README.md
+/data/
+/splits/
+/artifacts/
+/runs/
 *.pose
 *.pt
 *.safetensors

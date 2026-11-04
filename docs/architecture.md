@@ -1,6 +1,6 @@
 # Architecture and engineering decisions
 
-The default experiment translates complete pose sequences into English using translation cross-entropy. It uses a temporal CNN, a two-layer bidirectional LSTM and the full generic FLAN-T5-small encoder-decoder. Optional components require explicit configuration. These are implementation descriptions; numerical correctness and translation quality have not been established by execution.
+The default experiment translates complete pose sequences into English using translation cross-entropy. It uses a temporal CNN, a two-layer bidirectional LSTM and the full generic FLAN-T5-small encoder-decoder. Optional components require explicit configuration. Synthetic CPU tests cover the implemented contracts; real-pose quality and GPU validation remain separate acceptance checks.
 
 ## Data path
 
@@ -58,13 +58,17 @@ Configuration details and prerequisites are in [experiments](experiments.md).
 
 ## Reproducibility and checkpointing
 
+Epoch retention defaults to zero; epoch files are written only when explicitly requested for averaging. Same-epoch best snapshots share one serialized inode through atomic hard links, with a logged copy fallback on unsupported filesystems. `training.inference_snapshot_dtype: bf16` is an optional lossy storage conversion of inference weights only; it clears decoding and requires fresh validation selection. Native storage remains default and `last.pt` always keeps full training precision/state. Exclusive run ownership protects checkpoint cleanup and removes stale `.last.pt.*` files before continuation.
+
 Manifests, caches and checkpoints use content fingerprints and atomic writes. Split membership is immutable. Checkpoint compatibility includes architecture, tokenizer, feature schema, cache artifacts, split hashes, lexicon, RGB initializer and numerical policy. Prepared text assets record a resolved model revision and file checksums.
 
-Trajectory checkpoints contain model, optimizer, scheduler, scaler, RNG states, stage/epoch/batch position, tokenizer bytes, resolved config, initialization provenance, package versions and backend information. Wall-time exits save at accumulation boundaries. Exact resume requires matching data, configuration, numerical policy and backend. Load checkpoint files only from trusted runs; full optimizer/RNG restoration uses local Python serialization.
+Continuation checkpoints (`last.pt`) contain model, optimizer, scheduler, scaler, RNG states, stage/epoch/batch position, tokenizer bytes, resolved config, initialization provenance, package versions and backend information. Wall-time exits save at accumulation boundaries. Exact resume requires matching data, configuration, numerical policy and backend. Load checkpoint files only from trusted runs; full optimizer/RNG restoration uses local Python serialization.
 
-`last.pt` supports continuation; `best-bleu.pt` and `best-chrf.pt` serve distinct validation objectives. Checkpoint averaging accepts one compatible trajectory, checks nonfloating buffers and produces inference-only weights. Averaged weights require fresh validation decoding selection.
+`last.pt` supports continuation; `best-bleu.pt` and `best-chrf.pt` serve distinct validation objectives. `best-guarded.pt` requires a new historical BLEU-4 maximum and chrF++ no more than `training.guarded_chrf_tolerance` (default 0.5 percentage points) below the historical chrF++ maximum, evaluated before updating either maximum. Checkpoint averaging accepts one compatible trajectory, checks nonfloating buffers and produces inference-only weights. Averaged weights require fresh validation decoding selection.
 
 ## Package ownership
+
+Each run writes `parameter_counts.json` and embeds the inventory in checkpoints/evaluation reports. It records unique total, visual, T5 and other parameters plus trainable counts for every configured stage (including RGB final-block tuning). Tied T5 embeddings are counted once and buffers are excluded. Checkpoints additionally record the trainable count at save time; inventory calculation does not change model modes or gradient flags.
 
 | Package | Responsibility |
 | --- | --- |
@@ -80,3 +84,19 @@ Trajectory checkpoints contain model, optimizer, scheduler, scaler, RNG states, 
 `cli.py` dispatches explicit commands, `config.py` validates configuration, and `workflows.py` connects preparation and evaluation. Keeping prediction separate lets evaluation restore the exact trained model while keeping references outside its prediction interface.
 
 See [implementation status](implementation_status.md) for the execution boundary.
+
+## Review-era implementation decisions
+
+Baseline velocity stays in units per actual second. Its 48 joints produce 384 value/mask channels; the explicit no-velocity ablation removes 96 motion values plus 48 validity channels, leaving 240. Optional train-only standardization is applied at dataset/raw-inference boundaries, with a complete continuous-validity map and checkpointed statistics. It does not transform binary masks.
+
+Per-epoch validation uses `generation.train_beams`, default [1]. Final validation selection uses `generation.beams`, default [1,4], and writes a checkpoint/membership/generation-bound selection. The shared loader is used by evaluate, predict, benchmark and diagnostics. Test/gold must use the final selection when policies differ.
+
+Only `last.pt` is resumable. Best/epoch snapshots retain model/T5 configuration, input dimensions, tokenizer, lexicon, feature statistics, RGB initializer, decoding state, compatibility and provenance, while dropping optimizer/scheduler/scaler/RNG. Averaging preserves these reconstruction fields and clears stale decoding.
+
+Resume gates declared runtime dependency versions, Python minor and torch/CUDA/HIP builds. Full installed-package/platform/lock inventories remain provenance, so unrelated notebook packages do not block continuation. `--allow-environment-change` logs a full diff and marks continuation non-exact; it is separate from `--allow-code-change`. Neither overrides data/model/cache/numerical contracts or incompatible RNG topology. Old environment identities require an explicit transition. Strict determinism remains default.
+
+Dataset construction verifies cache arrays once. Per-item fetches check immutable file identities and manifest-bound metadata. Indexed source timelines and command-scoped signatures avoid global context scans and repeated raw hashing. Worker count remains zero until profiled; persistent workers are enabled only with workers > 0 and custom batches support GPU pinning.
+
+RGB hand-slot masking is deliberate: a failed hand crop receives upper-body fallback pixels for tensor construction, but its hand mask stays false. Fusion zeros that hand vector and includes the false mask; the valid upper-body slot supplies the visual fallback. Missing decoded frames have false masks. BatchNorm running statistics remain fixed even during final-block tuning.
+
+Pose noise applies only to position-valid normalized/standardized feature channels, including permitted imputation. It does not alter raw coordinates, binary masks, RGB vectors, or recompute derived velocity/bones. All optional changes remain explicit experiments.

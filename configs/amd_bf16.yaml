@@ -1,0 +1,5 @@
+extends: amd_fp32.yaml
+experiment: amd-bf16
+run_dir: runs/amd-bf16
+runtime:
+  precision: bf16

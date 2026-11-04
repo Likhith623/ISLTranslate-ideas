@@ -24,6 +24,16 @@ Use the same experiment's configuration for feature preparation, training and ev
 | `attention_lstm.yaml` | Attention-LSTM decoder with training-only BPE instead of T5 | Training-only vocabulary fitting; no pretrained T5 initializer |
 | `diagnostics.yaml` | Paired input diagnostics with BLEU/chrF++/TER/WER | Baseline checkpoint; these metrics avoid optional language-resource requirements |
 
+## AMD precision experiments
+
+`amd_fp32.yaml` uses eight workers, strict determinism and FP32 recurrence with a
+required GPU. `amd_bf16.yaml` changes autocast precision only; recurrence stays FP32
+and training/resume requires a successful environment preflight. The matched
+`amd_fp32_pilot.yaml` and `amd_bf16_pilot.yaml` run two epochs each with fixed greedy
+validation. Follow the [pilot comparison](runbook.md#fp32-versus-bf16-validation-pilot)
+before using BF16 for a full experiment. Their distinct run directories prevent
+cross-precision resume. The shared baseline stays unchanged.
+
 ## Baseline and anatomy variants
 
 The baseline trains one T5-frozen adapter epoch and up to 19 joint epochs. Keep this schedule unchanged for direct anatomy comparisons. Example commands for the wrist-local variant, after baseline data/split/model preparation:
@@ -31,7 +41,8 @@ The baseline trains one T5-frozen adapter epoch and up to 19 joint epochs. Keep 
 ```bash
 uv run --no-sync python -m isl_slt prepare-features --config configs/local_hand.yaml
 uv run --no-sync python -m isl_slt train --config configs/local_hand.yaml
-uv run --no-sync --env-file .env python -m isl_slt evaluate --config configs/local_hand.yaml --checkpoint runs/local-hand/checkpoints/best-bleu.pt --partition test --output runs/local-hand/evaluation/test
+uv run --no-sync --env-file .env python -m isl_slt evaluate --config configs/local_hand.yaml --checkpoint runs/local-hand/checkpoints/best-bleu.pt --partition validation --output runs/local-hand/evaluation/validation
+uv run --no-sync --env-file .env python -m isl_slt evaluate --config configs/local_hand.yaml --checkpoint runs/local-hand/checkpoints/best-bleu.pt --partition test --decoding runs/local-hand/evaluation/validation/decoding.json --output runs/local-hand/evaluation/test
 ```
 
 The equivalent config and run directories for bones and face are declared in their YAML files. For a combined hand/bone experiment, create an override with both flags, a new name and a distinct run directory. Reuse the same frozen memberships; fit no text resource on held-out rows.
@@ -62,7 +73,7 @@ uv run --no-sync python -m isl_slt train --config configs/transfer.yaml
 
 The configured chronology is generic T5 initialization → one frozen-adapter pretrain epoch → four joint pretrain epochs → up to 20 target epochs. This continues the model within one staged run rather than assuming a task-specific external checkpoint is uncontaminated.
 
-The transfer split directory is separate, but its target memberships must match the baseline comparison. Inspect hashes and the filter report. All target UIDs, held-out target parents, unresolved identities and available content duplicates are excluded from the extra pool. Missing duplicate-detection coverage remains a documented limitation.
+The transfer split directory is separate, but its target memberships must match the baseline comparison. Inspect hashes and the filter report. Every target parent (including training), target UID, unresolved identity, known content duplicate and normalized-text duplicate is excluded from the extra pool. Acquisition selects eligible whole source groups with an explicit compressed-byte budget and seed. Missing duplicate-detection coverage remains a documented limitation.
 
 ## Verified context
 
@@ -107,3 +118,15 @@ Use seeds 13, 42 and 2026 with fixed memberships, report individual scores and v
 Input diagnostics compare real, blank, incorrect and shuffled visual inputs using fixed pairing/seeds. For a nonbaseline checkpoint, inherit that experiment's config in a dedicated diagnostic override. Report donor/source flags and input dependence without claiming that diagnostics prove semantic faithfulness.
 
 No target BLEU value is an acceptance threshold or guaranteed result. Outcomes, throughput, latency, memory usage and numerical stability remain unmeasured.
+
+## Explicit scaling and motion ablations
+
+`standardized.yaml` enables valid continuous-channel standardization: prepare its features, run `prepare-stats`, then train using the same config. Statistics use immutable target-training records only and travel with the checkpoint. Binary masks and invalid/padded zeros retain their meaning.
+
+The baseline already enables per-second velocity, so the redundant velocity-enabled preset has been removed. `no_velocity.yaml` removes motion values plus their validity channels, reducing 384 channels to 240. The original baseline is not silently replaced by an undocumented v7 design.
+
+`overfit.yaml` is the separate unregularized diagnostic preset; it is never a held-out-quality result. Worker count/mixed precision/standardization need actual measurements before any efficiency or quality claim.
+
+The `evaluation.repeat_seeds` and `bootstrap_samples` fields are declarative experiment notes. They do not run seeds or override the independent `bootstrap --samples` CLI argument. Use the runbook's explicit seed loop and comparison commands.
+
+Cased metrics remain primary; _lc variants have their own signatures. Paper score equivalence also requires matching memberships, references and scoring policies, which are not established here. Strict seed summaries reject different effective settings or selected beams; use a predeclared common decoding protocol when necessary.

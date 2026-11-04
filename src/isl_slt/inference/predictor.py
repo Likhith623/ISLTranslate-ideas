@@ -8,13 +8,17 @@ from pydantic import Field
 
 from isl_slt.config import Config, Runtime, Strict
 from isl_slt.data.dataset import Collator, raw_sequence
+from isl_slt.data.context import SourceIndex
 from isl_slt.data.manifests import Record
 from isl_slt.evaluation.generation import decode_tokens
+from isl_slt.evaluation.selection import load_decoding_selection
 from isl_slt.features.pose import prepare_pose
+from isl_slt.features.statistics import apply_statistics, validate_statistics
+from isl_slt.features.cache import preprocessing_fingerprint
 from isl_slt.models.factory import build_model, load_tokenizer
 from isl_slt.training.checkpoint import load_checkpoint, restore_tokenizer
-from isl_slt.utils.io import file_hash
-from isl_slt.utils.runtime import autocast, device_for
+from isl_slt.utils.io import file_hash, fingerprint
+from isl_slt.utils.runtime import autocast, device_for, seed_everything
 
 
 class VisualInput(Strict):
@@ -47,11 +51,22 @@ class Predictor:
         self.cached_rgb_encoder = None
 
     @classmethod
-    def from_checkpoint(cls, checkpoint_path: str, runtime: Runtime | None = None):
+    def from_checkpoint(cls, checkpoint_path: str, runtime: Runtime | None = None,
+                        decoding: str | None = None, generation=None):
         payload = load_checkpoint(checkpoint_path)
+        if payload.get("feature_statistics"):
+            validate_statistics(payload["feature_statistics"])
+            if payload["compatibility"].get("statistics") != payload["feature_statistics"]["signature"]:
+                raise ValueError("Checkpoint feature statistics mismatch")
         config = Config.model_validate(payload["config"])
+        if config.features.standardize:
+            if payload.get("feature_statistics") is None:
+                raise ValueError("Standardized checkpoint is missing embedded feature statistics")
+            validate_statistics(payload["feature_statistics"], preprocessing_fingerprint(config),
+                                payload["compatibility"]["split_hashes"]["train"])
         if runtime is not None:
             config = config.model_copy(update={"runtime": runtime})
+        seed_everything(config.training.seed, config.runtime.deterministic, config.runtime.determinism_mode == "warn")
         tokenizer_dir = Path(checkpoint_path).parent / f"tokenizer-{payload['compatibility']['tokenizer'][:16]}"
         restore_tokenizer(payload["tokenizer"], tokenizer_dir)
         tokenizer = load_tokenizer(config, tokenizer_dir)
@@ -62,17 +77,35 @@ class Predictor:
         device = device_for(config.runtime)
         predictor = cls(model.to(device), tokenizer, config, device, payload["state"]["selected_beams"])
         predictor.checkpoint = payload
+        predictor.checkpoint_path = Path(checkpoint_path)
+        if generation is not None or decoding is not None:
+            predictor.configure_decoding(generation or config.generation, decoding)
         return predictor
+
+    def configure_decoding(self, generation, path=None):
+        saved = Config.model_validate(self.checkpoint["config"]).generation
+        if path is not None:
+            selection = load_decoding_selection(path, file_hash(self.checkpoint_path),
+                self.checkpoint["compatibility"]["split_hashes"]["validation"],
+                fingerprint(generation.model_dump(mode="json")))
+            self.beams = selection["selected_beams"]
+        else:
+            state = self.checkpoint["state"]
+            needs_sweep = state.get("decoding_policy") == "training-validation" and set(saved.train_beams) != set(generation.beams)
+            if generation != saved or self.beams is None or state.get("decoding_partition") != "validation" or needs_sweep:
+                raise ValueError("Supply --decoding from this checkpoint's final validation beam selection")
+        self.config = self.config.model_copy(update={"generation": generation})
 
     def prepare(self, inputs: list[VisualInput]) -> list[dict]:
         records = [item.as_record() for item in inputs]
+        indexed = SourceIndex(records)
         items = []
         for record in records:
-            sequence = raw_sequence(record, records, self.config)
+            sequence = raw_sequence(record, indexed, self.config)
             prepared = prepare_pose(sequence, self.config.features, self.config.context.enabled)
             if prepared.values.shape[1] != self.model.visual.cnn.convolutions[0].in_channels:
                 raise ValueError("Inference features do not match checkpoint input schema")
-            item = {"features": torch.from_numpy(prepared.values), "record": record}
+            item = {"features": torch.from_numpy(apply_statistics(prepared, self.checkpoint.get("feature_statistics"))), "record": record}
             if self.config.rgb.mode != "off":
                 from isl_slt.features.rgb import RGBEncoder, load_crops
                 images, mask = load_crops(record, records, sequence, self.config)

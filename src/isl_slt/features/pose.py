@@ -31,6 +31,7 @@ class Prepared:
     velocity_valid: np.ndarray
     regions: np.ndarray
     segments: np.ndarray
+    continuous_valid: np.ndarray
     metadata: dict
 
 
@@ -109,17 +110,28 @@ def prepare_pose(sequence: PoseSequence, settings: Features, context_enabled: bo
     velocity, velocity_valid = motion(positions, usable & anchors[:, None], sequence.times, sequence.segments)
     blocks = [positions.reshape(len(xy), -1), velocity.reshape(len(xy), -1), observed.astype(np.float32),
               imputed.astype(np.float32), position_valid.astype(np.float32), velocity_valid.astype(np.float32)]
+    validity = [np.repeat(position_valid, 2, axis=1), np.repeat(velocity_valid, 2, axis=1),
+                *[np.zeros_like(observed) for _ in range(4)]]
+    continuous = [True, True, False, False, False, False]
+    if not settings.velocity:
+        blocks = [blocks[index] for index in (0, 2, 3, 4)]
+        validity = [validity[index] for index in (0, 2, 3, 4)]
+        continuous = [True, False, False, False]
     if settings.local_hands:
         for start in (6, 27):
             local_valid = position_valid[:, start:start + 21] & position_valid[:, start:start + 1]
             local = positions[:, start:start + 21] - positions[:, start:start + 1]
             blocks.extend([np.where(local_valid[..., None], local, 0).reshape(len(xy), -1), local_valid.astype(np.float32)])
+            validity.extend([np.repeat(local_valid, 2, axis=1), np.zeros_like(local_valid)])
+            continuous.extend([True, False])
     if settings.bones:
         edges = [(0, 1), (0, 2), (2, 4), (1, 3), (3, 5)]
         edges += [(start + a, start + b) for start in (6, 27) for a, b in HAND_EDGES]
         bone_valid = np.stack([position_valid[:, a] & position_valid[:, b] for a, b in edges], axis=1)
         bones = np.stack([positions[:, b] - positions[:, a] for a, b in edges], axis=1)
         blocks.extend([np.where(bone_valid[..., None], bones, 0).reshape(len(xy), -1), bone_valid.astype(np.float32)])
+        validity.extend([np.repeat(bone_valid, 2, axis=1), np.zeros_like(bone_valid)])
+        continuous.extend([True, False])
     if settings.depth_scales:
         for component, scale in settings.depth_scales.items():
             if not np.isfinite(scale) or scale <= 0:
@@ -133,17 +145,24 @@ def prepare_pose(sequence: PoseSequence, settings: Features, context_enabled: bo
                 raise ValueError(f"No valid depth for {component}")
             depth = sequence.coordinates[:, raw_indices, 2] / scale
             blocks.extend([np.where(zvalid, depth, 0), zvalid.astype(np.float32)])
+            validity.extend([zvalid, np.zeros_like(zvalid)])
+            continuous.extend([True, False])
     if context_enabled:
         blocks.append(np.stack([sequence.regions == region for region in (-1, 0, 1)], axis=1).astype(np.float32))
+        validity.append(np.zeros_like(blocks[-1], dtype=bool))
+        continuous.append(False)
     values = np.concatenate(blocks, axis=1).astype(np.float32)
     if not np.isfinite(values).all():
         raise ValueError("Prepared features contain nonfinite values")
     metadata = {"schema": settings.schema_version, "joints": [list(name) for name in names],
                 "normalization": "valid-shoulder-midpoint-frame-center/segment-median-width-v1",
                 "input_dim": values.shape[1], "sequence": sequence.metadata,
+                "continuous_channels": np.flatnonzero(np.concatenate([
+                    np.full(block.shape[1], enabled, dtype=bool) for block, enabled in zip(blocks, continuous)
+                ])).tolist(),
                 "full_duration_resample_fps": settings.resample_fps}
     return Prepared(values, sequence.times, observed, imputed, position_valid, velocity_valid,
-                    sequence.regions, sequence.segments, metadata)
+                    sequence.regions, sequence.segments, np.concatenate(validity, axis=1), metadata)
 
 
 def resample_sequence(sequence: PoseSequence, fps: float | None) -> PoseSequence:

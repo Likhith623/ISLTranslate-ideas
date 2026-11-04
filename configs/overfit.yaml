@@ -1,0 +1,15 @@
+extends: baseline.yaml
+experiment: inspected-training-overfit
+run_dir: runs/inspected-training-overfit
+model: {dropout: 0}
+lexical: {weight: 0}
+training:
+  debug_only: true
+  weight_decay: 0
+  pose_noise_std: 0
+  micro_batch_size: 4
+  gradient_accumulation_steps: 1
+  early_stopping_patience: 100
+  stages:
+    - {name: overfit-unfrozen, dataset: target, epochs: 20, freeze_t5: false, tune_rgb: false}
+generation: {beams: [1]}

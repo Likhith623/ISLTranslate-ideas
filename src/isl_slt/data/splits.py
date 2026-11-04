@@ -29,9 +29,7 @@ def leakage_report(partitions: dict[str, list[Record]], require_verified: bool =
             ):
                 for value in values:
                     owner = owners.get(value)
-                    # Extra pretraining may share target TRAIN sources, never held-out sources or UIDs.
-                    permitted = kind == "source" and {owner, partition} == {"train", "pretrain"}
-                    if owner is not None and owner != partition and not permitted:
+                    if owner is not None and owner != partition:
                         violations.append({"kind": kind, "identity": value, "partitions": [owner, partition]})
                     owners[value] = owner or partition
     return {"ok": not violations and (not require_verified or not unresolved), "violations": violations,
@@ -63,7 +61,7 @@ def make_splits(records: list[Record], settings: Data) -> dict[str, list[Record]
     gold_sources = {r.source_id for r in records if r.interpreter_text is not None}
     result = {name: [] for name in ("train", "validation", "test", "gold")}
     assignment = {source: "gold" for source in gold_sources}
-    if settings.protocol == "original-paper":
+    if settings.protocol == "external-membership-gold-safe":
         _, external = read_csv(settings.original_splits_csv)
         membership = {row["uid"]: row["split"] for row in external}
         if len(membership) != len(external) or set(membership) != {r.uid for r in records}:
@@ -103,28 +101,35 @@ def make_splits(records: list[Record], settings: Data) -> dict[str, list[Record]
     return result
 
 
-def filter_pretraining(pool: list[Record], target: dict[str, list[Record]]) -> tuple[list[Record], dict]:
+def normalized_text(text: str) -> str:
+    import unicodedata
+    return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
+
+
+def pretraining_candidates(pool: list[Record], all_target: list[Record], *, require_poses: bool = False):
+    """The same exclusion policy runs before acquisition and again after pose auditing."""
     if audit_records(pool)["conflicting_labels"]:
         raise ValueError("Resolve conflicting extra-iSign labels before deduplication")
-    all_target = [row for rows in target.values() for row in rows]
-    heldout = [row for name, rows in target.items() if name != "train" for row in rows]
-    forbidden_sources = {r.source_id for r in heldout}
+    forbidden_sources = {r.source_id for r in all_target}
     forbidden_uids = {r.uid for r in all_target}
     forbidden_fingerprints = {value for r in all_target for value in r.duplicate_fingerprints}
+    seen_text = {normalized_text(r.text) for r in all_target}
     kept, excluded, seen_uid, seen_content = [], [], set(), set()
     for row in sorted(pool, key=lambda r: (r.dataset_name, r.uid)):
         reason = None
         if not row.source_verified or not row.source_id:
             reason = "unresolved_identity"
         elif row.source_id in forbidden_sources:
-            reason = "heldout_parent"
+            reason = "target_parent"
         elif row.uid in forbidden_uids or row.uid in seen_uid:
             reason = "duplicate_uid"
         elif set(row.duplicate_fingerprints) & (forbidden_fingerprints | seen_content):
             reason = "duplicate_fingerprint"
+        elif normalized_text(row.text) in seen_text:
+            reason = "duplicate_normalized_text"
         elif not row.text.strip():
             reason = "invalid_target"
-        elif not Path(row.pose_path).is_file():
+        elif require_poses and not Path(row.pose_path).is_file():
             reason = "missing_pose_asset"
         if reason:
             excluded.append({"uid": row.uid, "reason": reason, "provenance": row.source_provenance})
@@ -132,15 +137,23 @@ def filter_pretraining(pool: list[Record], target: dict[str, list[Record]]) -> t
             kept.append(row.model_copy(update={"split": "pretrain"}))
             seen_uid.add(row.uid)
             seen_content.update(row.duplicate_fingerprints)
+            seen_text.add(normalized_text(row.text))
+    return kept, excluded
+
+
+def filter_pretraining(pool: list[Record], target: dict[str, list[Record]]) -> tuple[list[Record], dict]:
+    kept, excluded = pretraining_candidates(pool, [row for rows in target.values() for row in rows], require_poses=True)
     report = assert_leakage_free({**target, "pretrain": kept})
     return kept, {**report, "pool_count": len(pool), "eligible_count": len(kept), "excluded": excluded,
-                  "identity_scope": "Only verified cross-dataset source identities are eligible; missing content hashes remain untested"}
+                  "policy": "all-target-sources-and-normalized-text-v2",
+                  "identity_scope": "Exclude every target parent and normalized text; missing perceptual hashes remain untested"}
 
 
 def export_splits(partitions: dict[str, list[Record]], settings: Data, pretrain_report: dict | None = None) -> dict:
     root = Path(settings.split_dir)
     report = assert_leakage_free(partitions, settings.protocol != "exploratory-unverified")
-    metadata = {"algorithm": "largest-deficit-whole-source-v1", "seed": settings.split_seed,
+    metadata = {"algorithm": "external-membership" if settings.protocol == "external-membership-gold-safe"
+                else "largest-deficit-whole-source-v1", "seed": settings.split_seed,
                 "protocol": settings.protocol, "ratios": list(settings.ratios),
                 "hashes": report["membership_hashes"],
                 "counts": {name: len(rows) for name, rows in partitions.items()},
@@ -175,6 +188,7 @@ def checked_splits(settings: Data) -> tuple[dict[str, list[Record]], dict]:
             raise ValueError("Record partition does not match its manifest")
     if "pretrain" in partitions:
         report_path = root / "pretraining-filter.json"
-        if not report_path.exists() or read_json(report_path)["membership_hashes"] != metadata["hashes"]:
+        if (not report_path.exists() or read_json(report_path)["membership_hashes"] != metadata["hashes"]
+            or read_json(report_path).get("policy") != "all-target-sources-and-normalized-text-v2"):
             raise ValueError("Missing or incompatible pretraining contamination report")
     return partitions, metadata

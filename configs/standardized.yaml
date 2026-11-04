@@ -1,0 +1,4 @@
+extends: baseline.yaml
+experiment: standardized-continuous
+run_dir: runs/standardized-continuous
+features: {standardize: true, statistics_path: artifacts/stats/standardized.json}

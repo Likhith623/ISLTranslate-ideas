@@ -1,0 +1,4 @@
+extends: baseline.yaml
+experiment: positions-without-velocity
+run_dir: runs/positions-without-velocity
+features: {velocity: false}

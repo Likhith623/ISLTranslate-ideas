@@ -1,0 +1,5 @@
+extends: amd_fp32_pilot.yaml
+experiment: amd-bf16-pilot
+run_dir: runs/amd-bf16-pilot
+runtime:
+  precision: bf16

@@ -38,12 +38,16 @@ def decode_pose(pose, record: Record, settings: Features) -> PoseSequence:
         raise ValueError(f"{record.uid}: person_index exceeds stored people")
     names, component_formats = [], {}
     for component in pose.header.components:
+        aliases = [key for key, value in settings.component_names.items() if value == component.name]
+        if len(aliases) > 1:
+            raise ValueError("Stored component maps to multiple canonical names")
+        component_name = aliases[0] if aliases else component.name
         if component.format not in ("XYC", "XYZC"):
             raise ValueError(f"Unsupported component format {component.name}:{component.format}; expected XYC/XYZC")
-        if component.name in component_formats:
+        if component_name in component_formats:
             raise ValueError(f"Ambiguous duplicate component {component.name}")
-        component_formats[component.name] = component.format
-        names.extend((component.name, str(point)) for point in component.points)
+        component_formats[component_name] = component.format
+        names.extend((component_name, str(point)) for point in component.points)
     if len(names) != data.shape[2] or len(set(names)) != len(names):
         raise ValueError("Pose header point names/counts do not uniquely describe the body array")
     array = np.asarray(data.data[:, person], dtype=np.float32)

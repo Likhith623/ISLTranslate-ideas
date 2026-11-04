@@ -1,31 +1,14 @@
 # Implementation status and pending verification
 
-The repository contains an implementation of the training/evaluation pipeline and operational documentation. It has not been executed or numerically validated. No dependencies, datasets or model weights have been installed/downloaded, no notebooks or tests have been run, and no training or paid compute has been started.
+The package implements revisioned acquisition, source-held-out splits, pose/RGB
+features, training/resume, reference-free prediction, evaluation and explicit
+experiments. See the [runbook](runbook.md) for setup and execution.
 
-## Implemented source
+## Local verification
 
-| Area | Implemented behavior |
-| --- | --- |
-| Configuration | Strict schemas, relative YAML inheritance, cross-feature/stage checks and explicit experiment configs |
-| Data | CSV adapters, revisioned records, corrections, source provenance, interpreter references and pose-header inspection |
-| Integrity | Asset checksums, immutable manifests, source-group splits, membership hashes, leakage checks and transfer filtering |
-| Features | Shoulder-normalized pose/motion channels, validity masks, anatomy variants, verified context and fingerprinted caches |
-| Baseline | Masked temporal CNN, packed two-layer BiLSTM, bridge and full generic FLAN-T5-small with translation CE |
-| Optional methods | Weak lexical BCE, staged transfer, sparse face/bones/local hands, cached/live RGB and attention-LSTM |
-| Training | Token-normalized accumulation, staged AdamW groups, precision policy, clipping, early stopping and wall-time exits |
-| Persistence | Atomic checkpoints, tokenizer/RNG/optimizer/scheduler/scaler state, compatibility checks and exact-resume contracts |
-| Evaluation | Free generation, validation decoding selection, corpus metrics, separate gold references and visual diagnostics |
-| Analysis | Seed summaries, source-paired bootstrap, inference-only checkpoint averaging, reference-free prediction and timing |
-| Environment | uv dependency/backend declarations, local credential template and recurrent environment probe |
-| Notebook | One unexecuted CLI runner with per-stage previews, optional model-download opt-in, derived paths and saved-report inspection |
-
-An implemented path is not a verified path. The tables describe source coverage, not test results or completed experiments.
-
-## Retained documentation
-
-The six guides cover [architecture](architecture.md), [data contracts](data_contracts.md), [experiments](experiments.md), [AMD setup](amd_setup.md), [operations](runbook.md) and this status record. Directory README files describe local [data](../data/README.md), [splits](../splits/README.md), [artifacts](../artifacts/README.md) and [run outputs](../runs/README.md).
-
-Local tests, lint tooling and redundant presets remain removed. Documentation and one [pipeline runner notebook](../notebooks/run_pipeline.ipynb) are retained. The optional `notebooks` extra declares JupyterLab/ipykernel, and the notebook is stored with no execution counts or outputs. A test suite has not been restored; no prior tests are claimed to have passed.
+CPU regression and integration results will be recorded after this change is tested.
+The committed lock is for project-owned environments; managed installations retain
+the host torch build and record their actual inventory separately.
 
 ## External inputs still required
 
@@ -36,30 +19,17 @@ Local tests, lint tooling and redundant presets remain removed. Documentation an
 - For context: verified timing, continuity, source duration where needed and actual requested coverage.
 - For RGB: videos, pose-to-video transforms, synchronization metadata and the declared ResNet18 initializer.
 - For optional linguistic metrics/labels: local WordNet, a declared local spaCy pipeline or a local BERTScore model/revision as configured.
-- A compatible future compute environment and a genuinely resolved `uv.lock`.
+- A compatible ROCm host and successful strict FP32/BF16 probes on that host.
 
-## Future verification work
+## Target-host acceptance still pending
 
-| Check | Evidence needed before claiming success |
-| --- | --- |
-| Dependency resolution | Real lockfile and successful uv sync with exactly one supported backend |
-| Backend support | Actual device/version report and recurrent forward/backward probe results |
-| Dataset adaptation | Inspected export columns, dataset revisions, pose headers and audit reports |
-| Leakage protection | Verified source provenance, frozen membership hashes and reviewed contamination/duplicate coverage |
-| Feature correctness | Inspected coordinate units, normalization, gap/motion masks, odd-length padding and cache invalidation |
-| Model gradients | Actual loss/gradient checks, including flow through frozen T5 into visual layers |
-| Accumulation/precision | Numerical checks for token normalization, partial windows, nonfinite skipping and mixed precision |
-| Resume | Interrupted versus uninterrupted continuation on a matching environment, with state/RNG checks |
-| Small-subset fit | Inspected 32–64 training examples, loss behavior and generated outputs under the diagnostic protocol |
-| Evaluation isolation | Free-generation predictions, validation-only selection and separately scored gold references |
-| Optional paths | Real eligible transfer pool, timed context, actual RGB images/caches and train-only lexical/BPE fitting |
-| Analysis | Compatible seed reports, valid source-paired comparisons, averaged decoding reselection and measured timing |
-| Notebook | Correct uv kernel, root resolution, baseline/local-hand paths, preview defaults, subprocess failures/interruption, resume and evaluation |
+Run strict FP32 env-check, inspect a real pose, audit source provenance and frozen
+memberships, prepare/verify caches and model assets, then run the paired two-epoch
+FP32/BF16 validation pilot. Compare quality, loading-inclusive throughput and memory
+before choosing BF16. The CPU suite does not establish AMD kernel compatibility,
+real-data translation quality or GPU performance. No GPU results are claimed here.
 
-Exact commands for executable preparation and checks are in the [runbook](runbook.md). A future test suite would need to be written or restored separately before running unit/integration tests; there is currently no bundled test command. Text inspection cannot substitute for numerical validation.
-
-## Reporting boundaries
-
-No experiment scores, throughput measurements, latency values, memory benchmarks, eligible-pool counts or compute costs have been produced. No BLEU guarantee is made. A successful input-dependence diagnostic would still not establish semantic faithfulness, and full-sequence bidirectional inference is not a streaming result.
-
-Future results should retain dataset/annotation/model revisions, exact memberships, resolved configs, dependency lock, package/backend versions, seeds, checkpoint checksums, decoding selection, metric signatures and raw predictions. Record measured failures and limitations alongside successful runs.
+Notebook launch/interruption, real optional RGB/context/transfer paths and optional
+language resources need checks on the actual deployment environment. Keep revisions,
+resolved configs, package/backend inventory, membership/checkpoint checksums,
+decoding policy and raw reports with every experiment.

@@ -16,8 +16,12 @@ def aggregate_runs(paths: list[str]) -> dict:
     reports = [read_json(path) for path in paths]
     if not reports:
         raise ValueError("No completed evaluation reports supplied")
+    from isl_slt.utils.io import fingerprint
+    if any("effective_evaluation" not in report or
+           report.get("evaluation_fingerprint") != fingerprint(report["effective_evaluation"]) for report in reports):
+        raise ValueError("Evaluation reports need valid effective-evaluation fingerprints; regenerate legacy reports")
     protocols = {(report["partition"], report["membership_hash"], report["comparison_fingerprint"],
-                  report["metrics"]["normalization"], report["metrics"]["signatures"].get("bleu4")) for report in reports}
+                  report["evaluation_fingerprint"]) for report in reports}
     if len(protocols) != 1 or len({r["seed"] for r in reports}) != len(reports):
         raise ValueError("Seed aggregation requires unique seeds, identical splits/protocols and experiment settings")
     metric_names = set(reports[0]["metrics"]["scores"])
@@ -26,7 +30,8 @@ def aggregate_runs(paths: list[str]) -> dict:
     summary = {name: {"mean": statistics.mean(values := [r["metrics"]["scores"][name] for r in reports]),
                       "std": statistics.stdev(values) if len(values) > 1 else 0.0} for name in sorted(metric_names)}
     return {"individual": [{"seed": r["seed"], "scores": r["metrics"]["scores"],
-                            "unavailable": r["metrics"].get("unavailable", {})} for r in reports],
+                            "unavailable": r["metrics"].get("unavailable", {}),
+                            "checkpoint_bytes": r.get("checkpoint_bytes")} for r in reports],
             "summary": summary, "std_policy": "sample standard deviation; zero for a single run",
             "partition": reports[0]["partition"], "membership_hash": reports[0]["membership_hash"],
             "prediction_pooling": False}
