@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ramagc"
+version = "0.2.0"
+description = "Reliability-Aware Multi-Rate Articulatory Graph-Conformer for continuous sign language translation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Research prototype; verify upstream dataset and model licenses separately" }
+authors = [{ name = "RA-MAGC research project" }]
+dependencies = [
+  "numpy>=1.24",
+  "torch>=2.1",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.4"]
+t5 = ["transformers>=4.40", "sentencepiece>=0.1.99"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ramagc*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
