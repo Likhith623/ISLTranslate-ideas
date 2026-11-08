@@ -80,6 +80,7 @@ class MultiScaleTemporalBlock(nn.Module):
         out4 = F.gelu(self.b4_norm(self.b4_pw(self.b4_dw(x_conv).transpose(1, 2))))
         
         concat = torch.cat([out1, out2, out3, out4], dim=-1)  # [B, T, 256]
+        concat = torch.where(mask[..., None], concat, torch.zeros_like(concat))
         projected = self.dropout(self.out_proj(concat))
         
         out = self.norm(res + projected)
@@ -279,10 +280,12 @@ class ConformerBlock(nn.Module):
         B, T, D = x.shape
         
         # 1. Macaron FFN 1 (half step: 0.5 * ffn)
-        x = x + 0.5 * self.ffn1(self.ffn1_norm(x)) * mask[..., None]
+        ffn1_in = torch.where(mask[..., None], self.ffn1_norm(x), torch.zeros_like(x))
+        x = x + 0.5 * self.ffn1(ffn1_in)
+        x = torch.where(mask[..., None], x, torch.zeros_like(x))
         
         # 2. MHSA with Relative Time Bias
-        normed = self.attn_norm(x)
+        normed = torch.where(mask[..., None], self.attn_norm(x), torch.zeros_like(x))
         q = self.q_proj(normed).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(normed).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(normed).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
@@ -300,18 +303,28 @@ class ConformerBlock(nn.Module):
         attn_weights = self.attn_dropout(attn_weights)
         
         attn_ctx = torch.matmul(attn_weights, v).transpose(1, 2).reshape(B, T, D)
-        x = x + self.attn_out(attn_ctx) * mask[..., None]
+        x = x + self.attn_out(attn_ctx)
+        x = torch.where(mask[..., None], x, torch.zeros_like(x))
         
-        # 3. Depthwise Temporal Convolution Module
+        # 3. Depthwise Temporal Convolution Module (AUDIT_REPORT.md Section 3.6)
+        # Reapply mask immediately after LayerNorm and after GLU to prevent bias leak
         c_in = self.conv_in_norm(x)
+        c_in = torch.where(mask[..., None], c_in, torch.zeros_like(c_in))
         c_glu = F.glu(self.conv_pw1(c_in), dim=-1)  # [B, T, D]
+        c_glu = torch.where(mask[..., None], c_glu, torch.zeros_like(c_glu))
         c_dw = self.conv_dw(c_glu.transpose(1, 2)).transpose(1, 2)  # [B, T, D]
+        c_dw = torch.where(mask[..., None], c_dw, torch.zeros_like(c_dw))
         c_act = F.gelu(self.conv_mid_norm(c_dw))
+        c_act = torch.where(mask[..., None], c_act, torch.zeros_like(c_act))
         c_out = self.conv_dropout(self.conv_pw2(c_act))
-        x = x + c_out * mask[..., None]
+        c_out = torch.where(mask[..., None], c_out, torch.zeros_like(c_out))
+        x = x + c_out
+        x = torch.where(mask[..., None], x, torch.zeros_like(x))
         
         # 4. Macaron FFN 2 (half step: 0.5 * ffn)
-        x = x + 0.5 * self.ffn2(self.ffn2_norm(x)) * mask[..., None]
+        ffn2_in = torch.where(mask[..., None], self.ffn2_norm(x), torch.zeros_like(x))
+        x = x + 0.5 * self.ffn2(ffn2_in)
+        x = torch.where(mask[..., None], x, torch.zeros_like(x))
         
         # 5. Final LayerNorm (guaranteed zero bias leak on padded frames)
         out = self.final_norm(x)

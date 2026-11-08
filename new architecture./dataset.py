@@ -44,45 +44,73 @@ HAND_EDGES = tuple((start, end) for finger in (
 BODY_EDGES = ((0, 1), (0, 2), (2, 4), (1, 3), (3, 5))
 
 
-def normalize_positions(xy: np.ndarray, valid: np.ndarray, segments: np.ndarray, epsilon: float = 1e-6):
+def compute_torso_reference(
+    body_xy: np.ndarray, 
+    body_valid: np.ndarray, 
+    uid: str = "sample", 
+    epsilon: float = 1e-4
+) -> tuple[np.ndarray, float]:
     """
-    Normalizes positions using shoulder midpoint and median shoulder width within continuous segments.
-    Matches repository contract in src/isl_slt/features/pose.py.
+    Computes a single unified torso reference for the entire clip (AUDIT_REPORT.md Section 3.3).
+    - center: left/right shoulder midpoint when observed [T, 2];
+      fallback: median valid midpoint within the continuous clip.
+    - scale: median valid shoulder distance within the clip.
+    Raises ValueError if the clip has no valid left/right shoulder pair.
     """
-    normalized, usable = np.zeros_like(xy), np.zeros_like(valid)
-    anchors = valid[:, 0] & valid[:, 1]
-    widths = np.linalg.norm(xy[:, 0] - xy[:, 1], axis=-1)
-    anchors &= np.isfinite(widths) & (widths > epsilon)
-    
-    for segment in np.unique(segments):
-        frames = segments == segment
-        good = frames & anchors
-        if not good.any():
-            continue
-        centers = (xy[:, 0] + xy[:, 1]) / 2.0
-        fallback = np.median(centers[good], axis=0)
-        center = np.where(anchors[:, None], centers, fallback)
-        scale = max(float(np.median(widths[good])), epsilon)
-        normalized[frames] = (xy[frames] - center[frames, None]) / scale
-        usable[frames] = valid[frames]
+    T = len(body_xy)
+    if body_xy.shape[1] < 2 or body_valid.shape[1] < 2:
+        raise ValueError(f"{uid}: body landmarks must contain at least left/right shoulders (indices 0 and 1)")
         
+    left_valid = body_valid[:, 0]
+    right_valid = body_valid[:, 1]
+    shoulder_anchors = left_valid & right_valid
+    
+    shoulder_diffs = body_xy[:, 1] - body_xy[:, 0]  # right - left
+    widths = np.linalg.norm(shoulder_diffs, axis=-1)
+    good_anchors = shoulder_anchors & np.isfinite(widths) & (widths > epsilon)
+    
+    if not good_anchors.any():
+        raise ValueError(f"{uid}: clip has no valid left/right shoulder pair for torso normalization")
+        
+    midpoints = (body_xy[:, 0] + body_xy[:, 1]) / 2.0  # [T, 2]
+    fallback_center = np.median(midpoints[good_anchors], axis=0)  # [2]
+    centers = np.where(good_anchors[:, None], midpoints, fallback_center[None, :])  # [T, 2]
+    scale = max(float(np.median(widths[good_anchors])), epsilon)
+    
+    return centers, scale
+
+
+def normalize_with_torso(
+    coords: np.ndarray, 
+    valid: np.ndarray, 
+    centers: np.ndarray, 
+    scale: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Normalizes coordinates of any anatomical region (body, hands, face) using the unified torso reference.
+    coords: [T, N, 2]
+    valid: [T, N]
+    centers: [T, 2]
+    scale: float
+    """
+    usable = valid & np.all(np.isfinite(coords), axis=-1)
+    normalized = (coords - centers[:, None, :]) / scale
     normalized = np.where(usable[..., None], normalized, 0.0)
-    return normalized, usable, anchors
+    return normalized, usable
 
 
-def compute_velocity(positions: np.ndarray, valid: np.ndarray, times: np.ndarray, segments: np.ndarray):
+def compute_velocity(positions: np.ndarray, valid: np.ndarray, times: np.ndarray):
     """
     Computes motion velocity in units per physical elapsed second.
-    Motion is strictly masked across discontinuity boundaries.
+    Motion is strictly masked when consecutive frames are invalid or dt <= 0.
     """
     velocity = np.zeros_like(positions)
     v_valid = np.zeros_like(valid)
     dt = np.diff(times)
     
-    # Motion valid only if consecutive frames in same segment are both valid
-    same_segment = (segments[1:] == segments[:-1])[:, None]
-    mask = valid[1:] & valid[:-1] & same_segment
-    diff = (positions[1:] - positions[:-1]) / dt[:, None, None]
+    # Motion valid only if consecutive frames are both valid and dt > 0
+    mask = valid[1:] & valid[:-1] & (dt[:, None] > 0)
+    diff = (positions[1:] - positions[:-1]) / np.maximum(dt[:, None, None], 1e-6)
     
     velocity[1:] = np.where(mask[..., None], diff, 0.0)
     v_valid[1:] = mask
@@ -131,63 +159,92 @@ class StructuredPoseSample:
     uid: str
     text: str
     times: np.ndarray
-    left_hand_nodes: np.ndarray   # [T, 21, 11]
+    left_hand_nodes: np.ndarray   # [T, 21, 13]
     left_hand_edges: np.ndarray   # [T, 21, 21, 4]
     left_hand_adj: np.ndarray     # [T, 21, 21]
     left_hand_valid: np.ndarray   # [T, 21]
-    right_hand_nodes: np.ndarray  # [T, 21, 11]
+    right_hand_nodes: np.ndarray  # [T, 21, 13]
     right_hand_edges: np.ndarray  # [T, 21, 21, 4]
     right_hand_adj: np.ndarray    # [T, 21, 21]
     right_hand_valid: np.ndarray  # [T, 21]
-    body_nodes: np.ndarray        # [T, 6, 8]
+    body_nodes: np.ndarray        # [T, 6, 10]
     body_edges: np.ndarray        # [T, 6, 6, 4]
     body_adj: np.ndarray          # [T, 6, 6]
     body_valid: np.ndarray        # [T, 6]
-    face_nodes: np.ndarray | None = None
-    face_valid: np.ndarray | None = None
+    face_nodes: np.ndarray | None = None  # [T, 18, 13]
+    face_valid: np.ndarray | None = None  # [T, 18]
 
 
 def extract_structured_sample(
     uid: str,
     text: str,
     times: np.ndarray,
-    segments: np.ndarray,
+    segments: np.ndarray | None,
     raw_coords: dict[str, np.ndarray],
     raw_valid: dict[str, np.ndarray],
+    raw_conf: dict[str, np.ndarray] | None = None,
     include_face: bool = False
 ) -> StructuredPoseSample:
     """
-    Constructs the exact 11-D hand node, 8-D body node, and 4-D edge feature tensors
-    specified in ideas.md Section 2.2.
+    Constructs the exact 13-D hand node, 10-D body node, and 13-D face node feature tensors
+    matching AUDIT_REPORT.md Section 3 and README.md Section 2.
     """
+    times = np.asarray(times, dtype=np.float64)
     T = len(times)
-    
-    # 1. Normalize Upper Body Positions (Shoulders, Elbows, Wrists)
-    body_xy = raw_coords["body"][:, :6, :2]
-    body_obs = raw_valid["body"][:, :6]
-    norm_body_xy, body_usable, _ = normalize_positions(body_xy, body_obs, segments)
-    body_vel, body_vel_valid = compute_velocity(norm_body_xy, body_usable, times, segments)
-    
-    # Upper Body Nodes: [T, 6, 8]
-    # (x, y, vx, vy, observed, imputed, pos_valid, vel_valid)
+    if T < 1:
+        raise ValueError(f"{uid}: sequence must contain at least 1 frame")
+    if not np.all(np.isfinite(times)):
+        raise ValueError(f"{uid}: timestamps contain non-finite values (NaN or Inf)")
+    if T > 1 and np.any(np.diff(times) <= 0):
+        raise ValueError(f"{uid}: timestamps must be strictly increasing with no duplicates or backwards steps")
+    if segments is not None and len(np.unique(segments)) > 1:
+        raise ValueError(f"{uid}: sample contains multiple segment IDs; must represent one continuous segment")
+
+    raw_conf = raw_conf or {}
+
+    def get_confidence(region_key: str, num_nodes: int) -> tuple[np.ndarray, np.ndarray]:
+        if region_key in raw_conf and raw_conf[region_key] is not None:
+            c = np.asarray(raw_conf[region_key][:, :num_nodes], dtype=np.float32)
+            c_val = np.isfinite(c) & (c >= 0.0)
+            c_clean = np.where(c_val, c, 0.0).astype(np.float32)
+            return c_clean, c_val.astype(np.float32)
+        else:
+            return np.zeros((T, num_nodes), dtype=np.float32), np.zeros((T, num_nodes), dtype=np.float32)
+
+    # 1. Establish common torso reference from body shoulders (AUDIT_REPORT.md Section 3.3)
+    body_xy = np.asarray(raw_coords["body"][:, :6, :2], dtype=np.float32)
+    body_obs = np.asarray(raw_valid["body"][:, :6], dtype=bool)
+    centers, scale = compute_torso_reference(body_xy, body_obs, uid=uid)
+
+    # Normalize Upper Body Positions (Shoulders, Elbows, Wrists)
+    norm_body_xy, body_usable = normalize_with_torso(body_xy, body_obs, centers, scale)
+    body_vel, body_vel_valid = compute_velocity(norm_body_xy, body_usable, times)
+    body_conf, body_conf_val = get_confidence("body", 6)
+
+    # Upper Body Nodes: [T, 6, 10]
+    # (x, y, vx, vy, det_conf, conf_valid, observed, imputed, pos_valid, vel_valid)
     body_nodes = np.concatenate([
         norm_body_xy, body_vel,
+        body_conf[..., None],
+        body_conf_val[..., None],
         body_obs[..., None].astype(np.float32),
         np.zeros((T, 6, 1), dtype=np.float32),  # imputed placeholder
         body_usable[..., None].astype(np.float32),
         body_vel_valid[..., None].astype(np.float32)
     ], axis=-1)
     body_edges, body_adj = build_edge_tensors(norm_body_xy, body_usable, 6, BODY_EDGES)
-    
+
     # 2. Hands (Left and Right)
     hand_samples = {}
     for side in ("left", "right"):
-        hand_xy = raw_coords[f"{side}_hand"][:, :21, :2]
-        hand_obs = raw_valid[f"{side}_hand"][:, :21]
+        hand_key = f"{side}_hand"
+        hand_xy = np.asarray(raw_coords[hand_key][:, :21, :2], dtype=np.float32)
+        hand_obs = np.asarray(raw_valid[hand_key][:, :21], dtype=bool)
         
-        # Use body shoulder center/scale for global hand normalization
-        norm_hand_xy, hand_usable, _ = normalize_positions(hand_xy, hand_obs, segments)
-        hand_vel, hand_vel_valid = compute_velocity(norm_hand_xy, hand_usable, times, segments)
+        # Use common body shoulder center/scale for global hand normalization
+        norm_hand_xy, hand_usable = normalize_with_torso(hand_xy, hand_obs, centers, scale)
+        hand_vel, hand_vel_valid = compute_velocity(norm_hand_xy, hand_usable, times)
+        hand_conf, hand_conf_val = get_confidence(hand_key, 21)
         
         # Wrist-relative coordinates (x_local, y_local)
         wrist_pos = norm_hand_xy[:, 0:1, :]  # Joint 0 is WRIST
@@ -196,10 +253,12 @@ def extract_structured_sample(
         local_valid = hand_usable & wrist_valid
         local_hand_xy = np.where(local_valid[..., None], local_hand_xy, 0.0)
         
-        # Hand Nodes: [T, 21, 11]
-        # (x, y, vx, vy, x_local, y_local, observed, imputed, pos_valid, vel_valid, local_valid)
+        # Hand Nodes: [T, 21, 13]
+        # (x, y, vx, vy, x_local, y_local, det_conf, conf_valid, observed, imputed, pos_valid, vel_valid, local_valid)
         hand_nodes = np.concatenate([
             norm_hand_xy, hand_vel, local_hand_xy,
+            hand_conf[..., None],
+            hand_conf_val[..., None],
             hand_obs[..., None].astype(np.float32),
             np.zeros((T, 21, 1), dtype=np.float32),
             hand_usable[..., None].astype(np.float32),
@@ -209,28 +268,38 @@ def extract_structured_sample(
         
         hand_edges, hand_adj = build_edge_tensors(norm_hand_xy, hand_usable, 21, HAND_EDGES)
         hand_samples[side] = (hand_nodes, hand_edges, hand_adj, hand_usable)
-        
-    # 3. Optional Facial Landmarks (18 points: ideas.md Section 2.2)
+
+    # 3. Optional Facial Landmarks (18 points: AUDIT_REPORT.md Section 3.1 & 3.2)
     face_nodes = None
     face_usable = None
     if include_face and "face" in raw_coords and "face" in raw_valid:
-        face_xy = raw_coords["face"][:, :18, :2]
-        face_obs = raw_valid["face"][:, :18]
-        norm_face_xy, face_usable, _ = normalize_positions(face_xy, face_obs, segments)
-        face_vel, face_vel_valid = compute_velocity(norm_face_xy, face_usable, times, segments)
+        face_xy = np.asarray(raw_coords["face"][:, :18, :2], dtype=np.float32)
+        face_obs = np.asarray(raw_valid["face"][:, :18], dtype=bool)
+        norm_face_xy, face_usable = normalize_with_torso(face_xy, face_obs, centers, scale)
+        face_vel, face_vel_valid = compute_velocity(norm_face_xy, face_usable, times)
+        face_conf, face_conf_val = get_confidence("face", 18)
         
-        # Inner eye anchors (point index 0 = 33, point index 4 = 362) for face-relative coordinates
-        eye_center = (norm_face_xy[:, 0:1, :] + norm_face_xy[:, 4:5, :]) / 2.0
-        eye_dist = np.linalg.norm(norm_face_xy[:, 4:5, :] - norm_face_xy[:, 0:1, :], axis=-1, keepdims=True)
-        eye_valid = face_usable[:, 0:1] & face_usable[:, 4:5] & (eye_dist > 1e-4)
+        # Inner eye anchors (point index 0 = 33, point index 4 = 362 in FACE_POINTS)
+        eye_center = (norm_face_xy[:, 0:1, :] + norm_face_xy[:, 4:5, :]) / 2.0  # [T, 1, 2]
+        eye_diff = norm_face_xy[:, 4:5, :] - norm_face_xy[:, 0:1, :]
+        eye_dist = np.linalg.norm(eye_diff, axis=-1, keepdims=True)  # [T, 1, 1]
         
-        local_face_xy = np.where(eye_valid, (norm_face_xy - eye_center) / np.maximum(eye_dist, 1e-4), 0.0)
-        local_face_valid = face_usable & eye_valid.squeeze(-1)
+        eye_valid = (face_usable[:, 0:1] & face_usable[:, 4:5] & (eye_dist.squeeze(-1) > 1e-4))  # [T, 1]
         
-        # Face Nodes: [T, 18, 11]
-        # (x, y, vx, vy, x_local, y_local, observed, imputed, pos_valid, vel_valid, local_valid)
+        # Explicit broadcasting across landmark and coordinate axes [T, 18, 2]
+        local_face_xy = np.where(
+            eye_valid[:, None, :], 
+            (norm_face_xy - eye_center) / np.maximum(eye_dist, 1e-4), 
+            0.0
+        )
+        local_face_valid = face_usable & eye_valid  # [T, 18]
+        
+        # Face Nodes: [T, 18, 13]
+        # (x, y, vx, vy, x_local, y_local, det_conf, conf_valid, observed, imputed, pos_valid, vel_valid, local_valid)
         face_nodes = np.concatenate([
             norm_face_xy, face_vel, local_face_xy,
+            face_conf[..., None],
+            face_conf_val[..., None],
             face_obs[..., None].astype(np.float32),
             np.zeros((T, 18, 1), dtype=np.float32),
             face_usable[..., None].astype(np.float32),
@@ -298,7 +367,7 @@ class RAMAGCCollator:
         if any(s.face_nodes is not None for s in samples):
             batch["face_nodes"] = pad_time_tensor([
                 torch.from_numpy(s.face_nodes).float() if s.face_nodes is not None
-                else torch.zeros((len(s.times), 18, 11), dtype=torch.float32)
+                else torch.zeros((len(s.times), 18, 13), dtype=torch.float32)
                 for s in samples
             ])
             batch["face_valid"] = pad_time_tensor([

@@ -30,7 +30,7 @@ class RegionInteraction(nn.Module):
             batch_first=True,
             norm_first=True
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.num_interaction_layers)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.num_interaction_layers, enable_nested_tensor=False)
         self.norm = nn.LayerNorm(config.region_dim)
 
     def forward(self, region_tokens: torch.Tensor, region_valid_mask: torch.Tensor) -> torch.Tensor:

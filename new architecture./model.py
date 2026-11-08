@@ -20,6 +20,37 @@ from .temporal import (
 )
 
 
+def compute_quality_descriptors(nodes: torch.Tensor, conf_idx: int = 6) -> torch.Tensor:
+    """
+    Computes the 6 quality descriptors per region matching AUDIT_REPORT.md and README.md Section 4:
+      1. mean detector confidence over points with an available confidence value
+      2. fraction of points with an available confidence value
+      3. observed ratio
+      4. imputed ratio
+      5. position-valid ratio
+      6. velocity-valid ratio
+    """
+    conf = nodes[..., conf_idx]
+    conf_val = nodes[..., conf_idx + 1]
+    obs = nodes[..., conf_idx + 2]
+    imp = nodes[..., conf_idx + 3]
+    pos_val = nodes[..., conf_idx + 4]
+    vel_val = nodes[..., conf_idx + 5]
+    
+    conf_counts = conf_val.sum(dim=-1).clamp_min(1.0)
+    has_any_conf = conf_val.sum(dim=-1) > 0
+    mean_conf = (conf * conf_val).sum(dim=-1) / conf_counts
+    mean_conf = torch.where(has_any_conf, mean_conf, torch.zeros_like(mean_conf))
+    
+    conf_avail_ratio = conf_val.mean(dim=-1)
+    obs_ratio = obs.mean(dim=-1)
+    imp_ratio = imp.mean(dim=-1)
+    pos_ratio = pos_val.mean(dim=-1)
+    vel_ratio = vel_val.mean(dim=-1)
+    
+    return torch.stack([mean_conf, conf_avail_ratio, obs_ratio, imp_ratio, pos_ratio, vel_ratio], dim=-1)  # [B, T, 6]
+
+
 class RAMAGCVisualEncoder(nn.Module):
     """
     Complete Visual Feature Extractor:
@@ -109,6 +140,13 @@ class RAMAGCVisualEncoder(nn.Module):
             visual_embeddings: [B, T_coarse, t5_d_model]
             coarse_mask: [B, T_coarse]
         """
+        assert left_hand_nodes.shape[-1] == self.config.hand.in_node_dim, (
+            f"Hand in_node_dim expected {self.config.hand.in_node_dim}, got {left_hand_nodes.shape[-1]}"
+        )
+        assert body_nodes.shape[-1] == self.config.body.in_node_dim, (
+            f"Body in_node_dim expected {self.config.body.in_node_dim}, got {body_nodes.shape[-1]}"
+        )
+        
         B, T = left_hand_nodes.shape[:2]
         frame_mask = length_mask(lengths, T, left_hand_nodes.device)
         
@@ -123,28 +161,34 @@ class RAMAGCVisualEncoder(nn.Module):
         body_val = body_valid.any(dim=-1) & frame_mask
         valid_list = [left_val, right_val, body_val]
         
-        # Compute quality descriptors for reliability gating (ideas.md Section 3.5):
-        # 1. fraction observed, 2. fraction imputed, 3. fraction pos-valid, 4. fraction vel-valid
-        q_left = left_hand_nodes[..., 6:10].mean(dim=-2)    # [B, T, 4]
-        q_right = right_hand_nodes[..., 6:10].mean(dim=-2)  # [B, T, 4]
-        q_body = body_nodes[..., 4:8].mean(dim=-2)          # [B, T, 4]
+        # Compute 6 quality descriptors per region (AUDIT_REPORT.md Section 3.5 & README Section 4):
+        q_left = compute_quality_descriptors(left_hand_nodes, conf_idx=6)    # [B, T, 6]
+        q_right = compute_quality_descriptors(right_hand_nodes, conf_idx=6)  # [B, T, 6]
+        q_body = compute_quality_descriptors(body_nodes, conf_idx=4)        # [B, T, 6]
         quality_list = [q_left, q_right, q_body]
         
         if self.face_encoder is not None and face_nodes is not None and face_valid is not None:
+            assert face_nodes.shape[-1] == self.config.face.in_node_dim, (
+                f"Face in_node_dim expected {self.config.face.in_node_dim}, got {face_nodes.shape[-1]}"
+            )
             h_face = self.face_encoder(face_nodes, face_valid)
             face_val = face_valid.any(dim=-1) & frame_mask
-            q_face = face_nodes[..., 6:10].mean(dim=-2)
+            q_face = compute_quality_descriptors(face_nodes, conf_idx=6)
             region_list.append(h_face)
             valid_list.append(face_val)
             quality_list.append(q_face)
             
         region_tokens = torch.stack(region_list, dim=2)        # [B, T, K, 128]
         region_valid_mask = torch.stack(valid_list, dim=-1)     # [B, T, K]
-        quality_desc = torch.stack(quality_list, dim=2)         # [B, T, K, 4]
+        quality_desc = torch.stack(quality_list, dim=2)         # [B, T, K, 6]
         
         # 2. Region Interaction & Reliability Gated Fusion
         interacted = self.region_interaction(region_tokens, region_valid_mask)
         fused = self.reliability_gate(region_tokens, interacted, quality_desc, region_valid_mask)  # [B, T, 256]
+        
+        # Reset batch-padded positions to zero before temporal blocks (AUDIT_REPORT.md Section 3.7)
+        # Real frames with no valid regions retain the learned missing_observation_embed
+        fused = torch.where(frame_mask[..., None], fused, torch.zeros_like(fused))
         
         # 3. Stacked Multi-Scale Temporal Blocks (Fine Path at full resolution T)
         fine_memory = fused

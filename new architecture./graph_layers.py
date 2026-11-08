@@ -242,7 +242,7 @@ class FaceSetEncoder(nn.Module):
             batch_first=True,
             norm_first=True
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.num_layers)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.num_layers, enable_nested_tensor=False)
         self.pool = MaskedAttentionPooling(config.hidden_dim)
         self.output_dim = config.hidden_dim
 
@@ -268,7 +268,8 @@ class FaceSetEncoder(nn.Module):
         
         # Self-attention over facial keypoints
         out_flat = self.transformer(h_flat, src_key_padding_mask=padding_mask)
-        out_flat = torch.where(~has_any, torch.zeros_like(out_flat), out_flat)
+        # Broadcast [BT, 1, 1] across [BT, 18, D] (AUDIT_REPORT.md Section 3.2)
+        out_flat = torch.where(~has_any.unsqueeze(-1), torch.zeros_like(out_flat), out_flat)
         out = out_flat.view(B, T, N, -1)
         return self.pool(out, valid_mask)
 

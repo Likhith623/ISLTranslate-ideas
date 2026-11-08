@@ -1,6 +1,6 @@
 """RA-MAGC (Reliability-Aware Multi-Rate Articulatory Graph-Conformer) package.
 
-State-of-the-art continuous Indian Sign Language Translation architecture.
+Research architecture prototype for continuous Indian Sign Language Translation.
 """
 
 from .config import (

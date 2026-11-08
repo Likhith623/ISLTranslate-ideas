@@ -41,7 +41,7 @@ class DataConfig:
 class HandGraphConfig:
     """Configuration for anatomical hand graph encoder (shared across left and right hands)."""
     num_joints: int = 21
-    in_node_dim: int = 11  # (x, y, vx, vy, x_local, y_local, obs, imp, pos_val, vel_val, loc_val)
+    in_node_dim: int = 13  # (x, y, vx, vy, x_local, y_local, det_conf, conf_val, obs, imp, pos_val, vel_val, loc_val)
     edge_dim: int = 4      # (dx, dy, length, edge_valid)
     hidden_dim: int = 128
     num_layers: int = 2
@@ -53,7 +53,7 @@ class HandGraphConfig:
 class BodyGraphConfig:
     """Configuration for upper body skeleton graph encoder."""
     num_joints: int = 6   # Shoulders, elbows, wrists
-    in_node_dim: int = 8  # (x, y, vx, vy, obs, imp, pos_val, vel_val)
+    in_node_dim: int = 10  # (x, y, vx, vy, det_conf, conf_val, obs, imp, pos_val, vel_val)
     edge_dim: int = 4     # (dx, dy, length, edge_valid)
     hidden_dim: int = 128
     num_layers: int = 2
@@ -66,7 +66,7 @@ class FaceSetConfig:
     """Configuration for sparse facial landmark set encoder."""
     enabled: bool = False
     num_points: int = 18
-    in_node_dim: int = 11  # (x, y, vx, vy, x_local, y_local, obs, imp, pos_val, vel_val, loc_val)
+    in_node_dim: int = 13  # (x, y, vx, vy, x_local, y_local, det_conf, conf_val, obs, imp, pos_val, vel_val, loc_val)
     hidden_dim: int = 128
     num_layers: int = 2
     num_heads: int = 4
@@ -80,7 +80,7 @@ class RegionFusionConfig:
     fused_dim: int = 256
     num_interaction_layers: int = 2
     num_heads: int = 4
-    quality_feature_dim: int = 4  # (ratio_obs, ratio_imp, ratio_pos_val, ratio_vel_val)
+    quality_feature_dim: int = 6  # (mean_conf, conf_avail_ratio, obs_ratio, imp_ratio, pos_val_ratio, vel_val_ratio)
     dropout: float = 0.1
 
 
@@ -134,4 +134,12 @@ class ModelConfig:
     batch_size: int = 16
     max_frames_per_batch: int = 16000
     seed: int = 42
+
+    def __post_init__(self):
+        assert self.hand.in_node_dim == 13, f"Hand in_node_dim must be 13, got {self.hand.in_node_dim}"
+        assert self.body.in_node_dim == 10, f"Body in_node_dim must be 10, got {self.body.in_node_dim}"
+        assert self.face.in_node_dim == 13, f"Face in_node_dim must be 13, got {self.face.in_node_dim}"
+        assert self.fusion.quality_feature_dim == 6, f"Fusion quality_feature_dim must be 6, got {self.fusion.quality_feature_dim}"
+        assert self.fusion.region_dim == self.hand.hidden_dim == self.body.hidden_dim, "Region dimension must match graph hidden dims"
+        assert self.conformer.d_model == self.fusion.fused_dim, "Conformer d_model must match fused_dim"
 
