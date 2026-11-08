@@ -60,6 +60,105 @@ Only after completing and validating Phase 1 and Phase 2:
 - Maintain complete audit reports and reproducibility records.
 
 Begin with Phase 0 and report the verified status of the existing CNN-BiLSTM baseline. Then proceed to RA-MAGC.
+
+## REFERENCE IMPLEMENTATIONS, DEFECT CORRECTION AND SAFE INTEGRATION
+
+Both `RA-MAGC-final/` and `ISL-MEGA/` have already been extracted into the project repository.
+
+Do not extract the ZIP files again.
+
+Treat these directories as immutable reference implementations. However, immutability does NOT mean that implementation defects should remain unfixed.
+
+### 1. Complete implementation audit
+
+Inspect every source file, configuration, dependency, test and documentation file.
+
+Identify:
+- Programming errors.
+- Mathematical and architectural errors.
+- Tensor dimension mismatches.
+- Incorrect data handling.
+- Missing functionality.
+- Incorrect masking and padding.
+- Training and evaluation bugs.
+- Incompatible APIs.
+- Dependency and checkpoint-loading problems.
+- Performance and memory inefficiencies.
+- Reproducibility issues.
+
+Do not assume that previously passing synthetic tests establish complete correctness.
+
+### 2. Correct all identified issues
+
+If any implementation issue is found:
+
+1. Record the original file and exact defect.
+2. Explain why it is incorrect.
+3. Explain its potential impact on training, inference or evaluation.
+4. Create a corrected replacement in the separate research implementation directory.
+5. Preserve the original implementation.
+6. Add a regression test that reproduces the original defect and verifies the correction.
+7. Run all relevant existing and newly added tests.
+8. Document the correction in the audit report.
+
+Never leave a known critical defect unfixed merely to preserve the original architecture implementation.
+
+### 3. Integration architecture
+
+Use a separate working directory:
+
+`ISLTranslate-Research/`
+
+Suggested structure:
+
+- `src/isl_research/ramagc/`
+- `src/isl_research/isl_mega/`
+- `src/isl_research/data/`
+- `src/isl_research/training/`
+- `src/isl_research/evaluation/`
+- `tests/`
+- `configs/`
+- `reports/`
+
+Copy and adapt the required reference modules into this working implementation. Correct them where necessary.
+
+Maintain a traceable record linking every integrated module to its original reference file.
+
+### 4. Mandatory correction report
+
+Produce:
+
+`reports/IMPLEMENTATION_DEFECTS_AND_CORRECTIONS.md`
+
+For every identified issue, include:
+
+- Original file.
+- Original implementation behaviour.
+- Reproduced defect.
+- Technical explanation.
+- Corrected implementation file.
+- Regression test.
+- Test result.
+- Remaining limitations.
+
+### 5. Research execution order
+
+First audit and correct the RA-MAGC implementation.
+
+Then integrate and evaluate RA-MAGC against the existing CNN-BiLSTM baseline.
+
+Only after the RA-MAGC milestone has passed its experimental and implementation audits should you integrate and correct ISL-MEGA.
+
+Apply the same strict correction and testing policy to ISL-MEGA.
+
+### NON-NEGOTIABLE
+
+Preserve the original reference directories, but fix every reproducible implementation defect in the separate research implementation.
+
+Do not sacrifice correctness for architectural consistency.
+
+Do not claim perfection merely because tests pass. Distinguish verified correctness, unverified external integrations and remaining research limitations.
+
 # MASTER RESEARCH AND IMPLEMENTATION PROMPT
 ## RA-MAGC Benchmark → Full ISL-MEGA Multimodal Indian Sign Language Translation System
 
