@@ -3,21 +3,38 @@
 Research architecture prototype for continuous Indian Sign Language Translation.
 """
 
-from .config import (
-    ModelConfig,
-    DataConfig,
-    HandGraphConfig,
-    BodyGraphConfig,
-    FaceSetConfig,
-    RegionFusionConfig,
-    MultiScaleTemporalConfig,
-    ConformerConfig
-)
-from .graph_layers import HandGraphEncoder, UpperBodyGraphEncoder, FaceSetEncoder
-from .fusion import RegionInteraction, ReliabilityGate
-from .temporal import MultiScaleTemporalBlock, PairwiseAggregator, ConformerBlock, FineDetailRetrieval
-from .model import RAMAGCVisualEncoder, RAMAGCTranslator
-from .dataset import RAMAGCCollator, RAMAGCDataset, StructuredPoseSample, HAND_EDGES, BODY_EDGES
+try:
+    from .config import (
+        ModelConfig,
+        DataConfig,
+        HandGraphConfig,
+        BodyGraphConfig,
+        FaceSetConfig,
+        RegionFusionConfig,
+        MultiScaleTemporalConfig,
+        ConformerConfig
+    )
+    from .graph_layers import HandGraphEncoder, UpperBodyGraphEncoder, FaceSetEncoder
+    from .fusion import RegionInteraction, ReliabilityGate
+    from .temporal import MultiScaleTemporalBlock, PairwiseAggregator, ConformerBlock, FineDetailRetrieval
+    from .model import RAMAGCVisualEncoder, RAMAGCTranslator
+    from .dataset import RAMAGCCollator, RAMAGCDataset, StructuredPoseSample, HAND_EDGES, BODY_EDGES
+except (ImportError, ValueError):
+    from config import (
+        ModelConfig,
+        DataConfig,
+        HandGraphConfig,
+        BodyGraphConfig,
+        FaceSetConfig,
+        RegionFusionConfig,
+        MultiScaleTemporalConfig,
+        ConformerConfig
+    )
+    from graph_layers import HandGraphEncoder, UpperBodyGraphEncoder, FaceSetEncoder
+    from fusion import RegionInteraction, ReliabilityGate
+    from temporal import MultiScaleTemporalBlock, PairwiseAggregator, ConformerBlock, FineDetailRetrieval
+    from model import RAMAGCVisualEncoder, RAMAGCTranslator
+    from dataset import RAMAGCCollator, RAMAGCDataset, StructuredPoseSample, HAND_EDGES, BODY_EDGES
 
 __all__ = [
     "ModelConfig",
