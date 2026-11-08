@@ -1,0 +1,222 @@
+# ==============================================================================
+# CANONICAL DATASET REGISTRY & PATH CONFIGURATION
+# Multi-Dataset Architecture for ISL Research (Phase 2 Provenance Audit & Training)
+# Governed by: AGENTS.md (Master Research & Implementation Prompt)
+# ==============================================================================
+
+version: "2.0.0"
+
+# ------------------------------------------------------------------------------
+# 1. GLOBAL ROOT PATHS
+# All paths support environment variable overrides (e.g. DATASET_ROOT, CACHE_DIR)
+# ------------------------------------------------------------------------------
+storage:
+  # Base workspace paths
+  root: "data"
+  raw_root: "data/raw"
+  manifest_root: "data/manifests"
+  processed_root: "data/processed"
+  cache_root: "data/cache"
+
+  # Canonical manifests generated during Phase 2 provenance audit
+  canonical_manifests:
+    master_manifest: "data/manifests/master_manifest.parquet"
+    source_provenance: "data/manifests/source_provenance.csv"
+    deduplication_report: "data/manifests/deduplication_report.csv"
+    split_assignments: "data/manifests/split_assignments.csv"
+    target_manifest: "data/manifests/target.jsonl"
+    pretrain_manifest: "data/manifests/pretrain.jsonl"
+
+# ------------------------------------------------------------------------------
+# 2. DATASET REGISTRY
+# ------------------------------------------------------------------------------
+datasets:
+
+  # ----------------------------------------------------------------------------
+  # Dataset A: ISLTranslate
+  # Sentence/phrase level ISL translation benchmark (ACL Findings 2023)
+  # ----------------------------------------------------------------------------
+  isltranslate:
+    name: "ISLTranslate"
+    role: "primary_benchmark_reproduction"
+    official_repo: "https://github.com/exploration-lab/isltranslate"
+    paper_url: "https://aclanthology.org/2023.findings-acl.665/"
+    license: "Research-only (ACL 2023)"
+    root: "data/raw/isltranslate"
+    env_override: "ISLTRANSLATE_ROOT"
+
+    files:
+      annotations_csv: "data/raw/isltranslate/ISLTranslate.csv"
+      human_validation_csv: "data/raw/isltranslate/ISL-signer_validation.csv"
+      video_dir: "data/raw/isltranslate/videos"
+      pose_dir: "data/raw/isltranslate/poses"
+
+    patterns:
+      video: "{uid}.mp4"
+      pose: "{uid}.pose"
+
+    schema:
+      uid_column: "uid"
+      text_column: "text"
+      candidate_uid_patterns:
+        - '^(?P<source>.+)-(?P<sequence>\d+)$'
+        - '^(?P<source>[A-Za-z0-9_-]{11})_(?P<tag>(?:w|d|e\d+))$'
+
+    validation:
+      human_validated_count: 291
+      landmark_format: "mediapipe_holistic"
+      num_landmarks: 543
+      original_split_policy: "source-held-out"
+
+  # ----------------------------------------------------------------------------
+  # Dataset B: iSign v1.1
+  # Large-scale multimodal ISL corpus (ACL Findings 2024)
+  # ----------------------------------------------------------------------------
+  isign:
+    name: "iSign"
+    version: "1.1"
+    role: "large_scale_multimodal_pretraining"
+    huggingface_repo: "Exploration-Lab/iSign"
+    official_url: "https://exploration-lab.github.io/iSign/"
+    paper_url: "https://arxiv.org/abs/2407.05404"
+    license: "CC-BY-NC-SA-4.0"
+    root: "data/raw/isign"
+    env_override: "ISIGN_ROOT"
+
+    archives:
+      videos:
+        parts:
+          - "iSign-videos_v1.1_part_aa"
+          - "iSign-videos_v1.1_part_ab"
+        target_archive: "iSign-videos_v1.1.zip"
+        extraction_dir: "data/raw/isign/videos"
+      poses:
+        parts:
+          - "iSign-poses_v1.1_part_aa"
+          - "iSign-poses_v1.1_part_ab"
+          - "iSign-poses_v1.1_part_ac"
+          - "iSign-poses_v1.1_part_ad"
+        target_archive: "iSign-poses_v1.1.zip"
+        extraction_dir: "data/raw/isign/poses"
+
+    files:
+      translations_csv: "data/raw/isign/isign_v1.1_translations.csv"
+      word_presence_csv: "data/raw/isign/word_presence.csv"
+      semantic_descriptions_csv: "data/raw/isign/semantic_descriptions.csv"
+
+    schema:
+      uid_format: "{video_id}-{sequence_number}"
+      split_group_key: "video_id"
+
+    constraints:
+      strict_source_grouping: true
+      non_commercial_check: true
+
+  # ----------------------------------------------------------------------------
+  # Dataset C: GloSL-ISL
+  # Large-scale pose-first ISL dataset
+  # ----------------------------------------------------------------------------
+  glosl_isl:
+    name: "GloSL-ISL"
+    role: "pose_representation_pretraining"
+    huggingface_repo: "pedroodb/glosl-isl"
+    documentation_url: "https://pypi.org/project/glosl/"
+    license: "CC-BY-4.0"
+    root: "data/raw/glosl-isl"
+    env_override: "GLOSL_ROOT"
+
+    reported_stats:
+      total_samples: 126846
+      total_hours: 269.03
+      train_samples: 101481
+      dev_samples: 12683
+      test_samples: 12682
+
+    files:
+      annotations_csv: "data/raw/glosl-isl/annotations.csv"
+      card_json: "data/raw/glosl-isl/card.json"
+      pose_dir: "data/raw/glosl-isl/poses"
+
+    schema:
+      landmark_format: "mediapipe_holistic"
+      num_landmarks: 543
+      split_policy: "source_disjoint_topic_stratified"
+
+    constraints:
+      verify_underlying_counts: true
+      separate_pose_benchmark: true
+
+  # ----------------------------------------------------------------------------
+  # Dataset D: ISL-FS-Dense
+  # Dense fingerspelling annotations (ACL WSLP 2025)
+  # ----------------------------------------------------------------------------
+  isl_fingerspelling:
+    name: "ISL-FS-Dense"
+    role: "fingerspelling_expert_supervision"
+    huggingface_repo: "kirandevraj/ISL-Fingerspelling"
+    official_project: "https://kirandevraj.github.io/ISL-Fingerspelling/"
+    code_repo: "https://github.com/Kirandevraj/ISL-Fingerspelling-Dense"
+    paper_url: "https://aclanthology.org/2025.wslp-main.6/"
+    license: "Research-only (ACL 2025)"
+    root: "data/raw/isl-fingerspelling"
+    env_override: "ISL_FS_ROOT"
+
+    files:
+      gold_manual_annotations_csv: "data/raw/isl-fingerspelling/manual_annotations.csv"
+      signer_split_csv: "data/raw/isl-fingerspelling/signer_split.csv"
+      automatic_discovered_csv: "data/raw/isl-fingerspelling/automatic_segments.csv"
+      segments_dir: "data/raw/isl-fingerspelling/segments"
+
+    annotations:
+      gold_manual_segments: 1308
+      automatic_discovered_segments: 11700
+      level: "character_and_word"
+      supervision_mode: "CTC_character_timestamps"
+
+    constraints:
+      gold_as_primary: true
+      weak_supervision_only_for_automatic: true
+      prevent_leakage_into_translation_test: true
+
+  # ----------------------------------------------------------------------------
+  # Dataset E: ISH-NEWS (2026)
+  # Continuous Indian Sign Language News Broadcast Corpus (Nature Sci Rep 2026)
+  # ----------------------------------------------------------------------------
+  ish_news:
+    name: "ISH-NEWS"
+    role: "evaluation_and_domain_adaptation"
+    paper_url: "https://www.nature.com/articles/s41598-026-60893-0"
+    drive_url: "https://drive.google.com/drive/folders/1cr2CETamR8qrkJQ-eHDreAsTavBXMOj6?usp=drive_link"
+    license: "Research-only annotations (Nature 2026); raw video copyright restricted"
+    root: "data/raw/ish-news"
+    env_override: "ISH_NEWS_ROOT"
+
+    reported_stats:
+      sentence_videos: 4222
+
+    files:
+      annotations_csv: "data/raw/ish-news/ish_news_annotations.csv"
+      splits_json: "data/raw/ish-news/splits.json"
+      timestamps_csv: "data/raw/ish-news/timestamps.csv"
+      videos_dir: "data/raw/ish-news/videos"
+
+    constraints:
+      verify_lawful_video_access: true
+      check_source_overlap_with_isl_fs: true
+
+# ------------------------------------------------------------------------------
+# 3. AUDIT & PROVENANCE SETTINGS
+# ------------------------------------------------------------------------------
+provenance_audit:
+  hash_algorithm: "sha256"
+  perceptual_hashing: true
+  deduplication_checks:
+    - "exact_media_hash"
+    - "parent_video_overlap"
+    - "segment_timestamp_overlap"
+    - "text_exact_match"
+    - "signer_overlap"
+  split_leakage_checks:
+    - "source_disjoint_validation"
+    - "signer_disjoint_validation"
+    - "ngram_leakage_check"

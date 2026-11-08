@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "isl-mega"
+version = "0.1.0"
+description = "Multimodal multi-expert evidence-grounded architecture for continuous Indian Sign Language translation research"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.2",
+  "numpy>=1.24",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+video = ["opencv-python-headless>=4.9"]
+vision = ["timm>=1.0"]
+text = ["transformers>=4.45", "sentencepiece>=0.2", "safetensors>=0.4"]
+eval = ["sacrebleu>=2.4", "rouge-score>=0.1.2"]
+test = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+all = ["opencv-python-headless>=4.9", "timm>=1.0", "transformers>=4.45", "sentencepiece>=0.2", "safetensors>=0.4", "sacrebleu>=2.4", "rouge-score>=0.1.2", "pytest>=8.0"]
+
+[project.scripts]
+isl-mega = "isl_mega.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

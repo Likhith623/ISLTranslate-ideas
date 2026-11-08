@@ -9,7 +9,12 @@ dist/
 .env
 .env.*
 !.env.example
-/data/
+# Data directory structure is preserved with .gitkeep; data assets are ignored
+data/**
+!data/
+!data/**/
+!data/**/.gitkeep
+!data/**/README.md
 /splits/
 /artifacts/
 /runs/

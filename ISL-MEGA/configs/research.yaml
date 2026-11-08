@@ -1,0 +1,91 @@
+# High-capacity ISL-MEGA research candidate. These settings are proposals,
+# not validated optima. Run SignDINO-style pretraining before SLT fine-tuning.
+vision:
+  backend: timm
+  timm_model_name: vit_large_patch14_dinov2.lvd142m
+  pretrained: true
+  image_size: 518
+  crop_size: 518
+  patch_size: 14
+  dim: 1024
+  depth: 24
+  heads: 16
+  mlp_ratio: 4.0
+  dropout: 0.1
+  separate_hand_face_body: true
+  freeze_backbone: false
+pose:
+  num_landmarks: 66
+  node_dim: 11
+  hidden_dim: 512
+  layers: 3
+  heads: 8
+  dropout: 0.1
+  min_confidence: 0.0
+  max_interpolation_gap_seconds: 0.20
+motion:
+  hidden_dim: 512
+  temporal_kernel: 7
+  dropout: 0.1
+fusion:
+  dim: 1024
+  num_heads: 16
+  layers: 3
+  quality_dim: 5
+  dropout: 0.1
+fingerspelling:
+  enabled: true
+  hidden_dim: 512
+  layers: 3
+  dropout: 0.1
+temporal:
+  dim: 1024
+  local_kernels: [3, 5, 9, 15]
+  local_dilations: [1, 1, 2, 4]
+  global_layers: 12
+  heads: 16
+  ffn_dim: 4096
+  dropout: 0.1
+  relative_time_buckets: 64
+  max_elapsed_seconds: 30.0
+  coarse_stride: 2
+  detail_window: 7
+  planner_queries: 32
+  planner_layers: 3
+decoder:
+  model_name: google/flan-t5-xl
+  local_files_only: false
+  max_target_tokens: 256
+  freeze_decoder: false
+  use_semantic_ot: true
+  ot_epsilon: 0.08
+  ot_iterations: 30
+data:
+  train_manifest: data/manifests/train.jsonl
+  valid_manifest: data/manifests/valid.jsonl
+  test_manifest: data/manifests/test.jsonl
+  image_size: 518
+  crop_size: 518
+  num_workers: 8
+  pin_memory: true
+  max_target_tokens: 256
+  strict_source_disjoint: true
+  require_signer_disjoint: false
+train:
+  epochs: 40
+  batch_size: 2
+  visual_lr: 0.0001
+  decoder_lr: 0.00001
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip_norm: 1.0
+  amp_dtype: bf16
+  ctc_weight: 0.10
+  ot_weight: 0.05
+  cross_modal_weight: 0.05
+  cross_modal_temperature: 0.07
+  label_smoothing: 0.0
+  seed: 2026
+  output_dir: runs/isl-mega-xl
+  log_every: 20
+  save_every_epochs: 1

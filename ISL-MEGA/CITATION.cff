@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+message: "If you use this research software, cite the software release and the relevant original methods listed in docs/references.md."
+title: "ISL-MEGA: Multi-Expert Evidence-Grounded Architecture for Continuous Indian Sign Language Translation"
+version: 0.1.0
+type: software
+authors:
+  - name: "ISL-MEGA Research Software Contributors"
+license: MIT
