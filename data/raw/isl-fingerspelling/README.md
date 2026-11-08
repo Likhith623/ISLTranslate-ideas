@@ -10,3 +10,4 @@
 - `signer_split.csv`: Official signer-independent train/dev/test split.
 - `automatic_segments.csv`: 11,700+ discovered segments referencing iSign parent videos (weak supervision only).
 - `segments/`: Extracted fingerspelling video clips and crops.
+

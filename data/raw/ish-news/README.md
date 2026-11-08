@@ -6,3 +6,4 @@
 
 ## Important Note on Video Access
 The authors do not redistribute raw video files directly due to copyright restrictions. Only derived annotations, timestamps, splits, and preprocessing resources are publicly distributed. Raw video assets must be acquired through documented, sanctioned sources or matched against legitimate news broadcasts before multimodal training.
+

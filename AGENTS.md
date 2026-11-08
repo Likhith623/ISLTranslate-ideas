@@ -1,3 +1,65 @@
+Before performing any operation, read the entire AGENTS.md file and follow its instructions sequentially.
+
+IMPORTANT: The original CNN-BiLSTM baseline has ALREADY been reproduced. Do not retrain or unnecessarily modify it.
+
+Follow this corrected execution sequence:
+
+### PHASE 0 — Audit Existing Projects and Baseline
+
+1. Audit the original ISLTranslate project, RA-MAGC-final and ISL-MEGA completely.
+2. Inspect the existing CNN-BiLSTM implementation, training configurations, dataset splits, checkpoints, training logs, predictions and evaluation metrics.
+3. Verify that the existing CNN-BiLSTM reproduction is genuine, complete and reproducible.
+4. Record its exact dataset membership, source-video IDs, preprocessing, evaluation configuration and results.
+5. Preserve the existing baseline and all its artifacts. Never overwrite them.
+6. If any baseline evidence is missing, report the specific missing information. Do not automatically retrain the baseline.
+
+### PHASE 1 — Implement and Evaluate RA-MAGC
+
+1. Integrate the corrected RA-MAGC implementation into the original ISLTranslate pipeline.
+2. Use exactly the same ISLTranslate examples, training/validation/test membership and evaluation protocol as the existing CNN-BiLSTM baseline.
+3. Verify the 543-to-66 landmark mapping against the actual MediaPipe Holistic data.
+4. Validate coordinate normalization, timestamps, missing-landmark handling and complete-sequence preservation.
+5. Train RA-MAGC using the established baseline dataset and splits.
+6. Perform at least three independent training runs where feasible.
+7. Compare CNN-BiLSTM and RA-MAGC using identical evaluation configurations.
+8. Perform all prescribed ablations, sequence-length analyses, statistical tests and visual-input-independent diagnostic tests.
+9. Produce RA_MAGC_BENCHMARK_REPORT.md with genuine experimental results.
+
+Do not proceed to the final multimodal training until the RA-MAGC integration and comparison have been successfully completed and audited.
+
+### PHASE 2 — Dataset Acquisition and Provenance Audit
+
+Follow the dataset acquisition and verification requirements in AGENTS.md.
+
+Acquire and inspect iSign, GloSL-ISL, ISL-FS-Dense and ISH-NEWS where legally and technically accessible.
+
+Construct the unified provenance-aware dataset registry. Resolve dataset overlap, duplicate videos, signer overlap and source-video leakage before combining datasets.
+
+### PHASE 3 — Full ISL-MEGA
+
+Only after completing and validating Phase 1 and Phase 2:
+
+1. Integrate the RGB appearance experts.
+2. Integrate the corrected RA-MAGC pose expert.
+3. Integrate the temporal motion expert.
+4. Pretrain the fingerspelling expert using ISL-FS-Dense.
+5. Implement reliability-aware asynchronous multimodal fusion.
+6. Implement hierarchical temporal reasoning.
+7. Implement the evidence-planning and FLAN-T5 translation components.
+8. Execute staged self-supervised pretraining, cross-modal alignment and translation training.
+9. Perform complete multimodal ablations and independent evaluation.
+
+### NON-NEGOTIABLE
+
+- Preserve the existing CNN-BiLSTM reproduction.
+- Never overwrite existing project files, checkpoints or experimental results.
+- Do not repeat already completed work without an identified technical reason.
+- Do not fabricate missing results.
+- Do not proceed to a later phase merely because the previous code compiles.
+- Distinguish synthetic tests from actual real-data experiments.
+- Maintain complete audit reports and reproducibility records.
+
+Begin with Phase 0 and report the verified status of the existing CNN-BiLSTM baseline. Then proceed to RA-MAGC.
 # MASTER RESEARCH AND IMPLEMENTATION PROMPT
 ## RA-MAGC Benchmark → Full ISL-MEGA Multimodal Indian Sign Language Translation System
 
@@ -941,3 +1003,230 @@ Keep a continuous record of completed work and unresolved issues.
 The final objective is a reproducible, rigorously evaluated, original ISL-to-English translation research system whose scientific contributions can be defended before peer reviewers.
 
 **Do not optimize for impressive parameter counts. Optimize for genuine translation accuracy, visual grounding, unseen-signer generalization, reproducibility and scientific validity.**
+
+
+# PART X — GPU OUTPUT PERSISTENCE, CHECKPOINT RETENTION AND MODEL RECOVERY
+
+This requirement is MANDATORY for every training, pretraining, fine-tuning and evaluation experiment.
+
+## 1. Persistent storage is compulsory
+
+All trained model weights, checkpoints and experiment outputs MUST be stored in persistent storage that survives GPU shutdown, instance stopping, deallocation and restart.
+
+Before starting any substantial GPU training:
+
+1. Identify the GPU environment and cloud provider.
+2. Identify which storage locations are persistent and which are ephemeral.
+3. Configure a dedicated persistent research storage directory.
+4. Verify that the directory remains accessible independently of the GPU compute session.
+5. Verify that sufficient storage capacity is available.
+6. If persistent storage is unavailable or cannot be verified, do not start expensive training. Report the exact blocker and request/configure an appropriate persistent storage destination.
+
+NEVER assume that `/tmp`, temporary workspace directories, container filesystems, notebook storage or GPU-instance local SSDs survive shutdown.
+
+## 2. Permanent project output structure
+
+Store all important outputs independently of temporary training environments.
+
+Use a structure similar to:
+
+```text
+ISL_RESEARCH_STORAGE/
+│
+├── baseline/
+│   ├── cnn_bilstm/
+│   └── existing_results/
+│
+├── RA-MAGC/
+│   ├── seed_42/
+│   ├── seed_123/
+│   ├── seed_3407/
+│   ├── checkpoints/
+│   ├── predictions/
+│   ├── logs/
+│   └── reports/
+│
+├── ISL-MEGA/
+│   ├── appearance/
+│   ├── pose/
+│   ├── motion/
+│   ├── fingerspelling/
+│   ├── cross_modal_alignment/
+│   ├── translation/
+│   ├── final_models/
+│   ├── predictions/
+│   ├── logs/
+│   └── reports/
+│
+├── optimizer_states/
+├── experiment_configs/
+├── tokenizer_assets/
+├── evaluation_results/
+└── storage_manifest/
+```
+
+Adapt the directory structure to the actual project, but preserve the separation between experiments and random seeds.
+
+## 3. Mandatory checkpoint saving
+
+During training, save:
+
+- Model weights.
+- Optimizer state.
+- Learning-rate scheduler state.
+- Mixed-precision GradScaler state, when used.
+- Current epoch.
+- Global training step.
+- Best validation metric.
+- Random-number generator states.
+- Data sampler state where necessary for accurate resumption.
+- Complete training configuration.
+- Model architecture configuration.
+- Dependency and environment metadata.
+- Relevant dataset and split manifest identifiers.
+
+Maintain three distinct checkpoint types:
+
+**A. Latest checkpoint**
+
+Save periodically, preferably after every epoch and at configurable safe training intervals.
+
+This must allow training to resume after an interruption.
+
+**B. Best checkpoint**
+
+Save the checkpoint selected using the predefined validation criterion.
+
+Never select the best checkpoint using test-set performance.
+
+**C. Final checkpoint**
+
+Save the final completed training state, even if it is not the best-performing checkpoint.
+
+Never automatically delete the best or final checkpoints.
+
+Use immutable, run-specific checkpoint filenames. Save using temporary files followed by atomic replacement, and verify successful completion.
+
+## 4. Graceful GPU shutdown and interruption handling
+
+When receiving a shutdown, preemption or termination signal:
+
+1. Stop accepting new training batches.
+2. Finish or safely interrupt the current optimizer step.
+3. Save the latest complete checkpoint.
+4. Synchronize pending writes to persistent storage.
+5. Upload important outputs to the configured persistent remote destination when required.
+6. Verify the checkpoint file exists and is readable.
+7. Record the latest completed epoch and training step.
+8. Exit cleanly.
+
+Do not depend exclusively on shutdown handlers. Checkpoints must already be saved periodically because sudden GPU termination may not provide enough time for a final save.
+
+## 5. Absolute prohibition on deleting trained model outputs
+
+NEVER delete, remove, overwrite or automatically prune:
+
+- Trained RA-MAGC models.
+- Trained ISL-MEGA models.
+- Best validation checkpoints.
+- Final checkpoints.
+- Resumable training checkpoints.
+- Specialist pretrained models.
+- Fine-tuned pretrained models.
+- Optimizer states required for resumption.
+- Experiment logs and evaluation predictions.
+- Model configurations and reproducibility manifests.
+
+Stopping or deallocating a GPU instance must stop compute usage, NOT delete research outputs.
+
+Do not execute cleanup operations that could remove persistent research artifacts.
+
+Temporary caches and disposable intermediate files may be cleaned only after confirming that they can be regenerated and are not required for model recovery.
+
+If storage capacity becomes insufficient, stop safely and report the issue. Never automatically delete important checkpoints to free storage.
+
+## 6. Backup and integrity verification
+
+At the end of every completed training run:
+
+1. Calculate SHA-256 hashes for the important model files.
+2. Verify their file sizes.
+3. Confirm that checkpoint files can be opened.
+4. Test loading the model in a fresh Python process.
+5. Verify that inference can be performed.
+6. Where remote object storage is available, synchronize important artifacts and verify uploaded objects against their recorded hashes.
+
+Keep at least one independently stored backup of the best and final model weights where storage infrastructure permits.
+
+Never consider an upload successful merely because an upload command returned without an error.
+
+## 7. Complete model delivery
+
+At the end of Phase 1, permanently preserve:
+
+- All RA-MAGC training runs.
+- The best RA-MAGC checkpoint.
+- The final RA-MAGC checkpoints.
+- All random-seed checkpoints.
+- Training and validation logs.
+- Predictions and metric outputs.
+
+At the end of Phase 3, permanently preserve:
+
+- All ISL-MEGA specialist checkpoints.
+- Appearance encoder weights.
+- Pose encoder weights.
+- Motion encoder weights.
+- Fingerspelling expert weights.
+- Cross-modal alignment checkpoints.
+- Complete translation-model checkpoints.
+- Best and final ISL-MEGA checkpoints.
+- All random-seed experiments.
+
+Provide a standalone inference package containing the trained architecture configuration, necessary model weights, tokenizer/processor assets where licensing permits, and inference instructions.
+
+Do not include restricted raw datasets or pretrained weights in public archives unless their licences permit redistribution.
+
+## 8. GPU shutdown and recovery verification
+
+Before stopping, deallocating or terminating the GPU:
+
+- Confirm every important checkpoint has been synchronized to persistent storage.
+- Confirm the storage mount is not tied to the GPU instance lifecycle.
+- Verify the latest and best checkpoints.
+- Record the storage location and checkpoint hashes.
+- Confirm that the trained models can be recovered without the original GPU session.
+
+After a GPU restart, verify that all saved checkpoints remain accessible and loadable.
+
+If the cloud provider offers attached persistent disks or durable object storage, use those instead of relying on ephemeral instance storage.
+
+## 9. Final storage report
+
+Produce:
+
+`reports/MODEL_STORAGE_AND_RECOVERY_REPORT.md`
+
+Include:
+
+- GPU provider and instance details.
+- Persistent storage type.
+- Persistent storage location.
+- Storage capacity and remaining space.
+- Every trained model's location.
+- Checkpoint names and sizes.
+- SHA-256 checksums.
+- Training run identifiers.
+- Best validation checkpoints.
+- Final checkpoints.
+- Backup locations.
+- Checkpoint restoration test results.
+- Confirmation of persistence across GPU restart, where actually tested.
+
+### FINAL NON-NEGOTIABLE INSTRUCTION
+
+GPU compute resources may be stopped to avoid unnecessary costs, but trained research outputs must remain permanently available in verified persistent storage.
+
+**NEVER DELETE MY TRAINED MODELS, CHECKPOINTS OR EXPERIMENTAL OUTPUTS WHEN STOPPING OR DEALLOCATING THE GPU.**
+
+Preserving the trained models and making them recoverable is part of completing the research task.

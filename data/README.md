@@ -22,3 +22,4 @@ data/
 ```
 
 All external dataset locations and paths are configurable via `configs/datasets.yaml` or environment variables (`ISLTRANSLATE_ROOT`, `ISIGN_ROOT`, etc.).
+

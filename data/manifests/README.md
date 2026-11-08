@@ -7,3 +7,4 @@ Manifests generated during Phase 2 Provenance Audit according to AGENTS.md Part 
 - `deduplication_report.csv`: Exact duplicates, near-duplicates, and cross-dataset parent video overlap audit.
 - `split_assignments.csv`: Source-disjoint and signer-disjoint split memberships.
 - `target.jsonl` / `pretrain.jsonl`: Formatted records for training and evaluation.
+
