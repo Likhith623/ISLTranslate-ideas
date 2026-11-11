@@ -57,7 +57,8 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
     model.train(training)
     sums = {
         "loss": 0.0, "translation": 0.0, "ctc": 0.0, "ot": 0.0, "cross_modal": 0.0,
-        "fs_spot": 0.0, "plan_div": 0.0, "plan_ord": 0.0, "fusion_ent": 0.0, "counterfactual": 0.0,
+        "fs_spot": 0.0, "plan_div": 0.0, "plan_ord": 0.0, "fusion_ent": 0.0,
+        "counterfactual": 0.0, "cf_nll_gap": 0.0,
     }
     count = 0
     for step, batch in enumerate(loader):
@@ -121,6 +122,7 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
             else:
                 fusion_ent = zero
             counterfactual = out.get("decoder_counterfactual_loss", zero) if cfg.train.counterfactual_weight > 0 else zero
+            cf_nll_gap = out.get("decoder_counterfactual_nll_gap", zero)
             loss = (
                 translation
                 + cfg.train.ctc_weight * ctc
@@ -148,7 +150,8 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
         for k, val in (
             ("loss", loss), ("translation", translation), ("ctc", ctc), ("ot", ot),
             ("cross_modal", cross_modal), ("fs_spot", fs_spot), ("plan_div", plan_div),
-            ("plan_ord", plan_ord), ("fusion_ent", fusion_ent), ("counterfactual", counterfactual),
+            ("plan_ord", plan_ord), ("fusion_ent", fusion_ent),
+            ("counterfactual", counterfactual), ("cf_nll_gap", cf_nll_gap),
         ):
             sums[k] += float(val.detach())
         count += 1
@@ -215,14 +218,15 @@ def main() -> None:
     if cfg.data.require_signer_disjoint:
         validate_split_disjointness(split_records, "signer_id", require_signer_disjoint=True)
 
+    use_pin_memory = cfg.data.pin_memory and device.type == "cuda"
     train_loader = DataLoader(
         train_ds, batch_size=cfg.train.batch_size, shuffle=True,
-        num_workers=cfg.data.num_workers, pin_memory=cfg.data.pin_memory,
+        num_workers=cfg.data.num_workers, pin_memory=use_pin_memory,
         collate_fn=collate_examples,
     )
     valid_loader = DataLoader(
         valid_ds, batch_size=cfg.train.batch_size, shuffle=False,
-        num_workers=cfg.data.num_workers, pin_memory=cfg.data.pin_memory,
+        num_workers=cfg.data.num_workers, pin_memory=use_pin_memory,
         collate_fn=collate_examples,
     )
     tokenizer = AutoTokenizer.from_pretrained(
@@ -240,15 +244,20 @@ def main() -> None:
                       if n.startswith("decoder.") and p.requires_grad]
     visual_params = [p for n, p in model.named_parameters()
                      if not n.startswith("decoder.") and p.requires_grad]
-    optimizer = torch.optim.AdamW(
-        [{"params": visual_params, "lr": cfg.train.visual_lr},
-         {"params": decoder_params, "lr": cfg.train.decoder_lr}],
-        weight_decay=cfg.train.weight_decay,
-    )
+    param_groups = [
+        group for group in (
+            {"params": visual_params, "lr": cfg.train.visual_lr},
+            {"params": decoder_params, "lr": cfg.train.decoder_lr},
+        )
+        if group["params"]
+    ]
+    optimizer = torch.optim.AdamW(param_groups, weight_decay=cfg.train.weight_decay)
     scheduler = build_epoch_scheduler(optimizer, cfg.train.epochs, cfg.train.warmup_ratio)
-    scaler = torch.cuda.amp.GradScaler(
-        enabled=(device.type == "cuda" and cfg.train.amp_dtype == "fp16")
-    )
+    amp_fp16 = device.type == "cuda" and cfg.train.amp_dtype == "fp16"
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        scaler = torch.amp.GradScaler("cuda", enabled=amp_fp16)
+    else:
+        scaler = torch.cuda.amp.GradScaler(enabled=amp_fp16)
 
     start_epoch = 0
     global_step = 0
@@ -264,19 +273,25 @@ def main() -> None:
     out_dir = Path(cfg.train.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg.save_json(out_dir / "resolved_config.json")
+    fieldnames = [
+        "epoch", "visual_lr", "train_loss", "valid_loss", "train_translation",
+        "valid_translation", "train_ctc", "train_fs_spot", "train_ot",
+        "train_cross_modal", "train_plan_div", "train_plan_ord",
+        "train_fusion_ent", "train_counterfactual", "train_cf_nll_gap", "valid_cf_nll_gap",
+    ]
     log_path = out_dir / "metrics.csv"
-    write_header = not log_path.exists()
-    with log_path.open("a", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=["epoch", "train_loss", "valid_loss", "train_translation",
-                        "valid_translation", "train_ctc", "train_fs_spot", "train_ot",
-                        "train_cross_modal", "train_plan_div", "train_plan_ord",
-                        "train_fusion_ent", "train_counterfactual"],
-        )
+    if args.resume and log_path.exists() and log_path.stat().st_size > 0:
+        existing_header = log_path.read_text(encoding="utf-8").splitlines()[0].split(",")
+        if existing_header != fieldnames:
+            log_path = out_dir / f"metrics_resumed_epoch_{start_epoch + 1}.csv"
+    mode = "a" if (args.resume and log_path.exists() and log_path.stat().st_size > 0) else "w"
+    write_header = mode == "w"
+    with log_path.open(mode, newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         if write_header:
             writer.writeheader()
         for epoch in range(start_epoch, cfg.train.epochs):
+            current_lr = float(optimizer.param_groups[0]["lr"])
             train_metrics = run_epoch(model, train_loader, tokenizer, cfg, device,
                                       optimizer=optimizer, scaler=scaler,
                                       max_steps=args.max_steps, epoch=epoch)
@@ -286,6 +301,7 @@ def main() -> None:
             global_step += train_metrics["batches"]
             row = {
                 "epoch": epoch + 1,
+                "visual_lr": current_lr,
                 "train_loss": train_metrics["loss"],
                 "valid_loss": valid_metrics["loss"],
                 "train_translation": train_metrics["translation"],
@@ -298,6 +314,8 @@ def main() -> None:
                 "train_plan_ord": train_metrics["plan_ord"],
                 "train_fusion_ent": train_metrics["fusion_ent"],
                 "train_counterfactual": train_metrics["counterfactual"],
+                "train_cf_nll_gap": train_metrics["cf_nll_gap"],
+                "valid_cf_nll_gap": valid_metrics["cf_nll_gap"],
             }
             writer.writerow(row)
             handle.flush()

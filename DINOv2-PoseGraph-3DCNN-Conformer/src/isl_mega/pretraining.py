@@ -71,12 +71,14 @@ class SignAwareDistillation(nn.Module):
         student_logits = self.student_head(self.student(local[keep]))
         with torch.no_grad():
             teacher_logits = self.teacher_head(self.teacher(global_frames))
-            teacher_prob = F.softmax((teacher_logits - self.center) / self.teacher_temperature, dim=-1)
+            teacher_prob = F.softmax(
+                (teacher_logits.float() - self.center.float()) / self.teacher_temperature, dim=-1
+            )
         owner = torch.arange(b, device=local.device)[:, None].expand(b, k).reshape(-1)[keep]
         targets = teacher_prob.index_select(0, owner)
-        student_logp = F.log_softmax(student_logits / self.student_temperature, dim=-1)
+        student_logp = F.log_softmax(student_logits.float() / self.student_temperature, dim=-1)
         loss = -(targets * student_logp).sum(-1).mean()
-        return loss, teacher_logits.detach().mean(0, keepdim=True)
+        return loss, teacher_logits.detach().float().mean(0, keepdim=True)
 
     @torch.no_grad()
     def update_teacher(self, momentum: float = 0.996):
@@ -100,7 +102,10 @@ class SignAwareDistillation(nn.Module):
 
     @torch.no_grad()
     def update_center(self, batch_center: torch.Tensor):
-        self.center.mul_(self.center_momentum).add_(batch_center, alpha=1.0 - self.center_momentum)
+        self.center.mul_(self.center_momentum).add_(
+            batch_center.to(device=self.center.device, dtype=self.center.dtype),
+            alpha=1.0 - self.center_momentum,
+        )
 
 
 def load_ssl_backbone(model, checkpoint_path: str, strict: bool = True):

@@ -65,14 +65,16 @@ def estimate_torso_scale(xy: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
     """
     b_xy, b_valid = xy[:, :, BODY], valid[:, :, BODY]
     both_shoulders = b_valid[:, :, 0] & b_valid[:, :, 1]
-    shoulder_span = torch.linalg.vector_norm(b_xy[:, :, 0] - b_xy[:, :, 1], dim=-1)
+    shoulder_diff = b_xy[:, :, 0] - b_xy[:, :, 1]
+    shoulder_span = torch.sqrt(shoulder_diff.square().sum(dim=-1) + 1e-8)
 
     def _spread(pts: torch.Tensor, m: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         big = torch.full_like(pts, -1e4)
         small = torch.full_like(pts, 1e4)
         hi = torch.where(m[..., None], pts, big).amax(dim=2)
         lo = torch.where(m[..., None], pts, small).amin(dim=2)
-        diag = torch.linalg.vector_norm((hi - lo).clamp_min(0.0), dim=-1)
+        span = (hi - lo).clamp_min(0.0)
+        diag = torch.sqrt(span.square().sum(dim=-1) + 1e-8)
         return diag, m.sum(dim=2) >= 2
 
     body_diag, body_ok = _spread(b_xy, b_valid)
@@ -119,7 +121,7 @@ class EdgeGraphBlock(nn.Module):
             rel = xy[:, :, None, :] - xy[:, None, :, :]
             if scale is not None:
                 rel = rel / scale.view(b, 1, 1, 1)
-            dist = torch.linalg.vector_norm(rel, dim=-1, keepdim=True)
+            dist = torch.sqrt(rel.square().sum(dim=-1, keepdim=True) + 1e-8)
             edge = torch.cat([rel, dist, torch.ones_like(dist)], dim=-1)
         else:
             edge = edge_features
@@ -206,6 +208,17 @@ class CrossArticulatorGraph(nn.Module):
         self.gate = nn.Parameter(torch.zeros(1))
         self.register_buffer("adj", cross_articulator_adjacency())
         self.register_buffer("rbf_sigmas", torch.tensor(CROSS_RBF_SIGMAS, dtype=torch.float32))
+        self.register_buffer("hand_key_idx", torch.tensor(HAND_KEY_INDICES, dtype=torch.long), persistent=False)
+        self.register_buffer(
+            "region_ids",
+            torch.cat([
+                torch.zeros(6, dtype=torch.long),
+                torch.ones(6, dtype=torch.long),
+                torch.full((6,), 2, dtype=torch.long),
+                torch.full((18,), 3, dtype=torch.long),
+            ]),
+            persistent=False,
+        )
 
     def forward(
         self,
@@ -215,7 +228,7 @@ class CrossArticulatorGraph(nn.Module):
         scale: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
         b, t = xy.shape[:2]
-        idx = torch.tensor(HAND_KEY_INDICES, device=xy.device, dtype=torch.long)
+        idx = self.hand_key_idx
         h_l = node_feats["left_hand"][:, :, idx]
         h_r = node_feats["right_hand"][:, :, idx]
         h_b = node_feats["body"]
@@ -231,19 +244,13 @@ class CrossArticulatorGraph(nn.Module):
         v_b = valid[:, :, BODY]
         v_f = valid[:, :, FACE]
 
-        r_ids = torch.cat([
-            torch.zeros(6, device=xy.device, dtype=torch.long),
-            torch.ones(6, device=xy.device, dtype=torch.long),
-            torch.full((6,), 2, device=xy.device, dtype=torch.long),
-            torch.full((18,), 3, device=xy.device, dtype=torch.long),
-        ])
-        x = torch.cat([h_l, h_r, h_b, h_f], dim=2) + self.region_emb(r_ids)[None, None]
+        x = torch.cat([h_l, h_r, h_b, h_f], dim=2) + self.region_emb(self.region_ids)[None, None]
         p = torch.cat([p_l, p_r, p_b, p_f], dim=2).reshape(b * t, 36, 2)
         m = torch.cat([v_l, v_r, v_b, v_f], dim=2).reshape(b * t, 36).bool()
         s = scale.reshape(b * t, 1, 1, 1)
 
         rel = (p[:, :, None, :] - p[:, None, :, :]) / s
-        dist = torch.linalg.vector_norm(rel, dim=-1, keepdim=True)
+        dist = torch.sqrt(rel.square().sum(dim=-1, keepdim=True) + 1e-8)
         rbf = torch.exp(-0.5 * (dist / self.rbf_sigmas.to(dist).view(1, 1, 1, -1)).square())
         edge_feat = torch.cat([rel, dist, rbf, torch.ones_like(dist)], dim=-1)
 
@@ -251,14 +258,15 @@ class CrossArticulatorGraph(nn.Module):
         h0 = h_flat
         for block in self.blocks:
             h_flat = block(h_flat, p, m, self.adj, edge_features=edge_feat)
-        delta = torch.tanh(self.gate) * (h_flat - h0)
+        delta = torch.tanh(self.gate).to(h_flat.dtype) * (h_flat - h0)
         delta = torch.where(m[..., None], delta, torch.zeros_like(delta)).reshape(b, t, 36, -1)
 
         out = {k: v.clone() for k, v in node_feats.items()}
-        out["left_hand"][:, :, idx] = out["left_hand"][:, :, idx] + delta[:, :, 0:6]
-        out["right_hand"][:, :, idx] = out["right_hand"][:, :, idx] + delta[:, :, 6:12]
-        out["body"] = out["body"] + delta[:, :, 12:18]
-        out["face"] = out["face"] + delta[:, :, 18:36]
+        d_out = delta.to(out["left_hand"].dtype)
+        out["left_hand"][:, :, idx] = out["left_hand"][:, :, idx] + d_out[:, :, 0:6]
+        out["right_hand"][:, :, idx] = out["right_hand"][:, :, idx] + d_out[:, :, 6:12]
+        out["body"] = out["body"] + d_out[:, :, 12:18]
+        out["face"] = out["face"] + d_out[:, :, 18:36]
         return out
 
 
@@ -347,8 +355,12 @@ class PoseExpert(nn.Module):
         for name, (sl, wrist) in groups.items():
             gxy, gfeat, gvalid, gconf = xy[:, :, sl], feat[:, :, sl].clone(), valid[:, :, sl], conf[:, :, sl]
             if wrist is not None:
-                anchor = gxy[:, :, wrist:wrist + 1]
-                anchor_valid = gvalid[:, :, wrist:wrist + 1]
+                wrist_xy = gxy[:, :, wrist:wrist + 1]
+                has_wrist = gvalid[:, :, wrist:wrist + 1]
+                hand_count = gvalid.sum(dim=2, keepdim=True).clamp_min(1)
+                hand_centroid = (gxy * gvalid[..., None]).sum(dim=2, keepdim=True) / hand_count[..., None]
+                anchor = torch.where(has_wrist[..., None], wrist_xy, hand_centroid)
+                anchor_valid = gvalid.any(dim=2, keepdim=True)
             elif name == "body":
                 # The documented body order begins with left/right shoulders.
                 # Prefer their midpoint; fall back to the visible body centroid

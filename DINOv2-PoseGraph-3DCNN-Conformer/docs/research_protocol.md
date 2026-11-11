@@ -43,8 +43,14 @@ Published BLEU scores across different corpora, splits, references or text norma
 | A11 | Remove semantic OT | Does the unconstrained OT objective help? |
 | A12 | Remove CTC | Does clip-level fingerspelling CTC help? |
 | A13 | Remove source-aware RGB↔pose InfoNCE | Does cross-modal same-frame alignment improve translation? |
+| A14 | Disable cross-articulator graph, shared hand encoder & torso normalization (`cross_articulator_graph=false`, `share_hand_encoder=false`, `normalize_by_shoulder_span=false`) | Does explicit hand-face-torso relational geometry improve unseen-signer and scale robustness? |
+| A15 | Disable continuous-time lag & uncertainty-gated fusion (`continuous_time_lag=false`, `reliability_uncertainty_gate=false`) | Does Gaussian-lag alignment and heteroscedastic uncertainty gating outperform static stream gating under blur/occlusions? |
+| A16 | Disable fingerspelling spotting & span-gated routing (`span_routing=false`) | Does span-gated character feedback reduce lexical-sign interference vs unconstrained CTC feedback? |
+| A17 | Disable salience-adaptive temporal consolidation (`adaptive_consolidation=false`) | Does motion-salience boundary pooling beat uniform stride consolidation across variable signing speeds? |
+| A18 | Disable diverse ordered planning & dynamic plan routing (`diverse_ordered_planning=false`, `dynamic_plan_routing=false`) | Do orthogonality, temporal ordering, and adaptive query halting improve multi-clause translation fidelity? |
+| A19 | Disable plan semantic OT & counterfactual visual sensitivity (`plan_semantic_ot=false`, `use_counterfactual_grounding=false`) | Do hierarchical plan OT and counterfactual grounding curb language-prior hallucinations? |
 
-Do not change multiple components at once in a purported single-factor ablation.
+Do not change multiple unlinked components outside matched config pairs (`configs/research.yaml` vs `configs/ablation_v1_baseline.yaml` for the full v1-at-matched-capacity baseline) in a purported single-factor ablation.
 
 ## 4. Required robustness and grounding checks
 

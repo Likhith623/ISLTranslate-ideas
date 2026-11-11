@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 import argparse
+import os
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
@@ -20,13 +21,15 @@ def main():
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch-size", type=int, default=2)
     args = p.parse_args()
+    if args.epochs <= 0 or args.batch_size <= 0:
+        raise SystemExit("--epochs and --batch-size must be positive")
     cfg = load_config(args.config)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # Unlabeled source videos are sufficient for self-supervised pretraining.
     ds = ISLVideoDataset(args.manifest, cfg.data.crop_size, cfg.data.image_size,
                          cfg.pose.max_interpolation_gap_seconds, require_translation=False)
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True, num_workers=cfg.data.num_workers,
-                        collate_fn=collate_examples, pin_memory=cfg.data.pin_memory)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                        collate_fn=collate_examples, pin_memory=(cfg.data.pin_memory and device.type == "cuda"))
     model = SignAwareDistillation(cfg.vision).to(device)
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=2e-4, weight_decay=0.04)
     model.train()
@@ -54,12 +57,14 @@ def main():
             running += float(loss.detach()); count += 1
         print(f"epoch={epoch+1} loss={running/max(count,1):.5f} batches={count}")
     out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(out.suffix + ".tmp")
     torch.save({"student_backbone": model.student.state_dict(),
                 "teacher_backbone": model.teacher.state_dict(),
                 "student_head": model.student_head.state_dict(),
                 "teacher_head": model.teacher_head.state_dict(),
                 "center": model.center.detach().cpu(),
-                "vision_config": cfg.vision.__dict__}, out)
+                "vision_config": cfg.vision.__dict__}, tmp)
+    os.replace(tmp, out)
     print(f"Saved student backbone to {out}")
 
 if __name__ == "__main__":

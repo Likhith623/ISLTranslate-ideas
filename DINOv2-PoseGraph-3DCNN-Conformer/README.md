@@ -78,7 +78,7 @@ Each NPZ contains:
 - `video_timestamps`: `[Tv]` seconds, strictly increasing.
 - `pose_xy`: `[Tp,66,2]` normalized original-frame coordinates in `[0,1]`.
 - `pose_timestamps`: `[Tp]` seconds in the same clock/time origin as the video timestamps.
-- Optional `pose_confidence`, `pose_valid`, `boxes`, `box_valid`, `box_scores`.
+- Optional `pose_confidence`, `pose_valid`, `boxes`, `box_valid`, `box_scores`, `fingerspelling_spans`.
 
 The JSONL manifest needs `uid`, `npz`, and `source_id`; supervised training additionally requires `translation`. `signer_id` is strongly recommended and required if signer-disjoint evaluation is enabled. `source_id` must identify the original source video, not a derived clip fragment. See the data contract for exact landmark and ROI ordering.
 
@@ -142,7 +142,7 @@ Evaluate a selected checkpoint:
 ```bash
 python scripts/evaluate.py \
   --config configs/research.yaml \
-  --checkpoint runs/isl-mega-xl/last.pt \
+  --checkpoint runs/isl-mega-v2-xl/best_valid.pt \
   --out runs/evaluation/predictions.jsonl
 ```
 
@@ -194,10 +194,10 @@ These papers use different datasets and task settings. Do not compare their repo
 
 1. No actual ISL data, annotation files, pretrained weights or trained checkpoints ship in this repository.
 2. The original `.pose` parser must export the documented canonical pose schema; no undocumented binary parser is included.
-3. The fingerspelling CTC path currently supports one clip-level character transcript per record. Precise sub-clip fingerspelling spans and timestamped character alignments need an annotation/segmentation extension.
+3. The fingerspelling pathway supports either clip-level character strings (weak MIL + CTC) or optional frame-level `fingerspelling_spans` (interval list `[start_sec, end_sec]` in JSONL or `[Tv]` boolean array in NPZ). Character-level boundary annotations still depend on dataset provisioning.
 4. Face appearance features do not by themselves constitute validated ISL non-manual grammar recognition or lipreading.
-5. The latent-plan attention is inspectable, but this repository does not include human-labelled frame-evidence annotations or a direct spatial grounding loss.
-6. The implemented loss combines translation CE with source-aware same-frame RGB↔pose InfoNCE, optional clip-level CTC and optional entropic semantic OT. The OT term is unconstrained and is not a gold sign-to-English alignment. No human frame-grounding supervision or reinforcement-learning attention steering is implemented.
+5. The latent-plan attention is inspectable and regularized for query diversity and temporal ordering, but this repository does not include human-labelled frame-rationale annotations.
+6. The implemented loss combines translation CE with source-aware same-frame RGB↔pose InfoNCE, optional CTC + MIL/span spotting, plan diversity/ordering, fusion entropy regularization, frame+plan semantic OT and detached counterfactual visual sensitivity. The OT term is unconstrained and is not a gold sign-to-English alignment. No human frame-grounding supervision or reinforcement-learning attention steering is implemented.
 7. The default split utility enforces source disjointness. Signer disjointness must be explicitly requested and is only as reliable as the signer metadata. Deduplication of near-identical translations/video edits requires a separate corpus audit.
 8. Human evaluation, inter-annotator agreement, confidence intervals, multi-seed experiments, baseline reproduction and ablations remain essential research work.
 

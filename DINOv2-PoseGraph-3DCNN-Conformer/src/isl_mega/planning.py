@@ -142,7 +142,8 @@ class LatentPlanGrounder(nn.Module):
             tau = torch.where(memory_mask.bool(), tau, torch.zeros_like(tau))
             row_mass = grounding.float().sum(dim=-1).clamp_min(1e-6)
             centers = (grounding.float() * tau[:, None, :]).sum(dim=-1) / row_mass
-            step_ok = plan_mask[:, :-1] & plan_mask[:, 1:]
+            has_span = (memory_mask.sum(dim=1) >= 2)[:, None]
+            step_ok = plan_mask[:, :-1] & plan_mask[:, 1:] & has_span
             violation = F.relu(centers[:, :-1] - centers[:, 1:] + self.order_margin)
             order_loss = (violation * step_ok).sum() / step_ok.sum().clamp_min(1.0)
         return diversity_loss.to(plan.dtype), order_loss.to(plan.dtype)

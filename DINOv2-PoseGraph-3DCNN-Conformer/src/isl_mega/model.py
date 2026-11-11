@@ -110,7 +110,9 @@ class ISLMEGA(nn.Module):
         diff_energy = torch.zeros((b, t), dtype=frames.dtype, device=frames.device)
         body = crops[:, :, 3]
         if t > 1:
-            diff_energy[:, 1:] = (body[:, 1:] - body[:, :-1]).abs().mean(dim=(2, 3, 4))
+            pair_valid = body_available[:, 1:] & body_available[:, :-1]
+            raw_diff = (body[:, 1:] - body[:, :-1]).abs().mean(dim=(2, 3, 4))
+            diff_energy[:, 1:] = torch.where(pair_valid, raw_diff, torch.zeros_like(raw_diff))
         motion_avail = body_available
         quality["motion"] = torch.stack([motion_avail.float(), diff_energy,
                                           roi_q[:, :, 3, 3], motion_avail.float(), frame_mask.float()], -1)
@@ -118,7 +120,7 @@ class ISLMEGA(nn.Module):
             left_ok = effective_box_valid[:, :, 1] | pose["available"]["left_hand"]
             right_ok = effective_box_valid[:, :, 2] | pose["available"]["right_hand"]
             fs_avail = fs["available"] & frame_mask
-            fs_conf_signal = fs["spot_prob"] if self.config.fingerspelling.span_routing else fs["gate"]
+            fs_conf_signal = (fs["spot_prob"] if self.config.fingerspelling.span_routing else fs["gate"]).float()
             quality["fingerspelling"] = torch.stack([
                 fs_avail.float(), (left_ok | right_ok).float(), fs_conf_signal,
                 fs["logits"].float().softmax(-1).amax(-1), frame_mask.float()

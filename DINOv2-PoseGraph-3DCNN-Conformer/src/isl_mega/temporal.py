@@ -254,33 +254,37 @@ class HierarchicalTemporalEncoder(nn.Module):
             raw_dt = (timestamps[:, 1:] - timestamps[:, :-1]).clamp_min(1e-4)
             step_dt[:, 1:] = torch.where(valid_pairs, raw_dt, step_dt[:, 1:])
 
-        delta_norm = torch.linalg.vector_norm(delta, dim=-1, keepdim=True) / math.sqrt(d)
+        delta_norm = torch.sqrt(delta.square().sum(dim=-1, keepdim=True) + 1e-8) / math.sqrt(d)
         salience_in = torch.cat([fine, delta, delta_norm, torch.log1p(step_dt).unsqueeze(-1)], dim=-1)
-        salience = (F.softplus(self.salience_net(salience_in).squeeze(-1)) + 0.1)
+        salience = F.softplus(self.salience_net(salience_in).squeeze(-1).float()) + 0.1
         salience = torch.where(fine_mask, salience, torch.zeros_like(salience))
 
         total_s = salience.sum(dim=-1, keepdim=True).clamp_min(1e-6)
         cum = torch.cumsum(salience, dim=-1) - 0.5 * salience
-        slot_pos = (cum / total_s) * m_valid[:, None].to(fine.dtype)
-        centres = torch.arange(m, device=fine.device, dtype=fine.dtype) + 0.5
-        sigma = F.softplus(self.log_slot_sigma) + 0.30
+        slot_pos = (cum / total_s) * m_valid[:, None].float()
+        centres = torch.arange(m, device=fine.device, dtype=torch.float32) + 0.5
+        sigma = F.softplus(self.log_slot_sigma.float()) + 0.30
         assign_logits = -0.5 * ((slot_pos[:, None, :] - centres[None, :, None]) / sigma).square()
 
         allowed_mt = coarse_mask[:, :, None] & fine_mask[:, None, :]
         any_frame = allowed_mt.any(-1, keepdim=True)
-        masked_logits = assign_logits.masked_fill(~allowed_mt, torch.finfo(fine.dtype).min)
+        masked_logits = assign_logits.masked_fill(~allowed_mt, torch.finfo(assign_logits.dtype).min)
         masked_logits = torch.where(any_frame, masked_logits, torch.zeros_like(masked_logits))
-        assign = torch.softmax(masked_logits, dim=-1)
-        assign = torch.where(allowed_mt & any_frame, assign, torch.zeros_like(assign))
+        assign_f = torch.softmax(masked_logits, dim=-1)
+        assign_f = torch.where(allowed_mt & any_frame, assign_f, torch.zeros_like(assign_f))
+        assign = assign_f.to(fine.dtype)
 
         grouped_mean = torch.bmm(assign, fine)
         grouped_delta = torch.bmm(assign, torch.where(fine_mask[..., None], delta, torch.zeros_like(delta)))
         coarse = self.coarse_projection(torch.cat([grouped_mean, grouped_delta], dim=-1))
-        coarse_times = (assign * timestamps[:, None, :]).sum(dim=-1)
-        slot_std = (assign * (timestamps[:, None, :] - coarse_times[:, :, None]).square()).sum(dim=-1).clamp_min(0.0).sqrt()
+        ts_f = timestamps.float()
+        coarse_times = (assign_f * ts_f[:, None, :]).sum(dim=-1)
+        slot_var = (assign_f * (ts_f[:, None, :] - coarse_times[:, :, None]).square()).sum(dim=-1)
+        # Smooth offset avoids inf/NaN backward when T == 1 or a slot collapses to one frame.
+        slot_std = torch.sqrt(slot_var.clamp_min(0.0) + 1e-6) - 1e-3
 
-        elapsed = coarse_times - timestamps[:, :1]
-        scale = torch.stack([elapsed, torch.log1p(elapsed.clamp_min(0))], dim=-1)
+        elapsed = coarse_times - ts_f[:, :1]
+        scale = torch.stack([elapsed, torch.log1p(elapsed.clamp_min(0.0))], dim=-1)
         coarse = coarse + self.time_projection(scale.to(coarse.dtype))
         coarse = coarse + self.slot_spread_proj(slot_std[..., None].to(coarse.dtype))
         coarse = torch.where(coarse_mask[..., None], coarse, torch.zeros_like(coarse))
@@ -310,10 +314,10 @@ class HierarchicalTemporalEncoder(nn.Module):
             for block in self.global_blocks:
                 coarse = block(coarse, coarse_mask, bias)
             retrieved = self.adaptive_detail(coarse, fine, assign_logits, coarse_mask, fine_mask)
-            rev_weights = assign / assign.sum(dim=1, keepdim=True).clamp_min(1e-6)
+            rev_weights = assign.float() / assign.float().sum(dim=1, keepdim=True).clamp_min(1e-6)
             rev_weights = torch.where(coarse_mask[:, :, None] & fine_mask[:, None, :],
                                       rev_weights, torch.zeros_like(rev_weights))
-            global_up = torch.bmm(rev_weights.transpose(1, 2), retrieved)
+            global_up = torch.bmm(rev_weights.transpose(1, 2).to(retrieved.dtype), retrieved)
             aux = {
                 "fine": fine,
                 "global": coarse,

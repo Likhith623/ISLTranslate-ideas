@@ -71,6 +71,10 @@ def compute_fingerspelling_spotting_loss(
     """Supervise frame-level fingerspelling activity logits via spans or clip-level MIL."""
     if spot_logits is None or availability is None:
         return torch.tensor(0.0, device=input_lengths.device)
+    if spot_logits.ndim != 2 or availability.shape != spot_logits.shape:
+        raise ValueError("spot_logits and availability must have matching [B,T] shapes")
+    if input_lengths.shape != (spot_logits.shape[0],) or len(texts) != spot_logits.shape[0]:
+        raise ValueError("input_lengths and texts must match spot_logits batch size")
     losses = []
     for i, text in enumerate(texts):
         length = int(input_lengths[i])

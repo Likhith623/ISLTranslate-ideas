@@ -109,20 +109,23 @@ class T5VisualDecoder(nn.Module):
                   "encoder_last_hidden_state": output.encoder_last_hidden_state}
 
         if semantic_ot:
-            text_ids = labels.masked_fill(labels < 0, self.model.config.pad_token_id)
-            text_mask = text_ids.ne(self.model.config.pad_token_id)
-            text_output = self.model.encoder(input_ids=text_ids, attention_mask=text_mask.long(),
-                                             return_dict=True)
+            pad_id = 0 if self.model.config.pad_token_id is None else int(self.model.config.pad_token_id)
+            text_ids = labels.masked_fill(labels < 0, pad_id)
+            text_mask = text_ids.ne(pad_id)
+            with torch.no_grad():
+                text_output = self.model.encoder(input_ids=text_ids, attention_mask=text_mask.long(),
+                                                 return_dict=True)
+            target_embeds = text_output.last_hidden_state.detach()
             enc_hidden = output.encoder_last_hidden_state
             visual_ot = entropic_semantic_ot(
                 enc_hidden[:, :visual.shape[1]], visual_mask,
-                text_output.last_hidden_state, text_mask, epsilon=ot_epsilon, iterations=ot_iterations,
+                target_embeds, text_mask, epsilon=ot_epsilon, iterations=ot_iterations,
             )
             result["visual_semantic_ot_loss"] = visual_ot
             if plan_semantic_ot:
                 plan_ot = entropic_semantic_ot(
                     enc_hidden[:, visual.shape[1]:], eff_plan_mask,
-                    text_output.last_hidden_state, text_mask, epsilon=ot_epsilon, iterations=ot_iterations,
+                    target_embeds, text_mask, epsilon=ot_epsilon, iterations=ot_iterations,
                 )
                 result["plan_semantic_ot_loss"] = plan_ot
                 result["semantic_ot_loss"] = (1.0 - plan_ot_alpha) * visual_ot + plan_ot_alpha * plan_ot
@@ -131,13 +134,20 @@ class T5VisualDecoder(nn.Module):
 
         if counterfactual_grounding:
             b = embeddings.shape[0]
+            zero_embeds = torch.zeros_like(embeddings.detach())
+            zero_mask = torch.zeros_like(mask, dtype=torch.long)
+            zero_mask[:, 0] = 1
             if b >= 2 and counterfactual_mode == "batch_swap_or_zero":
-                cf_embeds = embeddings.roll(1, dims=0).detach()
-                cf_mask = mask.roll(1, dims=0).long()
+                rolled_embeds = embeddings.roll(1, dims=0).detach()
+                rolled_mask = mask.roll(1, dims=0).long()
+                # If rolled target happens to equal the current sample's target, swap is
+                # not a semantic counterfactual; fall back per sample to the blank token.
+                same_target = (labels == labels.roll(1, dims=0)).all(dim=-1)
+                cf_embeds = torch.where(same_target[:, None, None], zero_embeds, rolled_embeds)
+                cf_mask = torch.where(same_target[:, None], zero_mask, rolled_mask)
             else:
-                cf_embeds = torch.zeros_like(embeddings.detach())
-                cf_mask = torch.zeros_like(mask, dtype=torch.long)
-                cf_mask[:, 0] = 1
+                cf_embeds = zero_embeds
+                cf_mask = zero_mask
             with torch.no_grad():
                 decoder_input_ids = self.model.prepare_decoder_input_ids_from_labels(labels=labels)
                 decoder_mask = self._decoder_mask(labels)
@@ -174,6 +184,8 @@ class T5VisualDecoder(nn.Module):
         length_penalty: float = 1.0,
         plan_mask: torch.Tensor | None = None,
     ):
+        if num_beams < 1 or max_new_tokens < 1:
+            raise ValueError("num_beams and max_new_tokens must be >= 1")
         embeddings, mask = self.encode_inputs(visual, visual_mask, plan, plan_mask=plan_mask)
         # Supplying explicit encoder_outputs is more portable across Transformers
         # versions than relying on GenerationMixin's inputs_embeds handling.

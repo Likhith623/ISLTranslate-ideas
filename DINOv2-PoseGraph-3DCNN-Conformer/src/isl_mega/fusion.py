@@ -136,13 +136,13 @@ class ReliabilityAwareFusion(nn.Module):
         flat_mask_safe = flat_mask.clone()
         flat = flat.clone()
         if all_missing.any():
-            flat[all_missing, 0] = self.null[0, 0]
+            flat[all_missing, 0] = self.null[0, 0].to(flat.dtype)
             flat_mask_safe[all_missing, 0] = True
         interacted = self.interaction(flat, src_key_padding_mask=~flat_mask_safe).reshape(b, t, len(self.names), -1)
-        gate_in = torch.cat([interacted, q], dim=-1)
-        logits = self.quality_gate(gate_in).squeeze(-1)
+        gate_in = torch.cat([interacted, q.to(interacted.dtype)], dim=-1)
+        logits = self.quality_gate(gate_in).squeeze(-1).float()
         if self.reliability_net is not None:
-            reliability = torch.sigmoid(self.reliability_net(q).squeeze(-1))
+            reliability = torch.sigmoid(self.reliability_net(q.to(interacted.dtype)).squeeze(-1).float())
             reliability = torch.where(mask, reliability, torch.zeros_like(reliability))
             logits = logits + torch.log(reliability.clamp_min(1e-4))
         else:
@@ -151,8 +151,8 @@ class ReliabilityAwareFusion(nn.Module):
         logits = torch.where(mask.any(-1, keepdim=True), logits, torch.zeros_like(logits))
         weights = torch.softmax(logits, dim=-1)
         weights = torch.where(mask, weights, torch.zeros_like(weights))
-        pooled = (interacted * weights[..., None]).sum(dim=2)
-        pooled = torch.where(mask.any(-1, keepdim=True), pooled, self.null.expand(b, t, -1))
+        pooled = (interacted * weights.to(interacted.dtype)[..., None]).sum(dim=2)
+        pooled = torch.where(mask.any(-1, keepdim=True), pooled, self.null.to(pooled.dtype).expand(b, t, -1))
 
         if self.continuous_lag_bias is not None:
             r = self.config.lag_radius_frames
@@ -161,39 +161,38 @@ class ReliabilityAwareFusion(nn.Module):
             in_range = (time_index >= 0) & (time_index < t)
             safe_index = time_index.clamp(0, t - 1)
             times = (
-                timestamps if timestamps is not None
-                else torch.arange(t, device=pooled.device, dtype=pooled.dtype)[None].expand(b, t) / 25.0
+                timestamps.float() if timestamps is not None
+                else torch.arange(t, device=pooled.device, dtype=torch.float32)[None].expand(b, t) / 25.0
             )
             dt = times[:, safe_index] - times[:, :, None]  # [B,T,K]
             time_ok = (dt.abs() <= self.config.lag_window_seconds) | (offsets[None, None, :] == 0)
             neighbours = interacted[:, safe_index]
             neighbour_mask = mask[:, safe_index] & in_range[None, :, :, None] & time_ok[..., None]
             k_off = len(offsets)
-            bias_term = self.continuous_lag_bias(dt)
+            bias_term = self.continuous_lag_bias(dt.to(pooled.dtype)).float()
         else:
             offsets = torch.arange(-2, 3, device=pooled.device)
             time_index = torch.arange(t, device=pooled.device)[:, None] + offsets[None, :]
             in_range = (time_index >= 0) & (time_index < t)
             safe_index = time_index.clamp(0, t - 1)
-            dt = (offsets[None, None, :].to(pooled.dtype) / 25.0).expand(b, t, -1)
+            dt = (offsets[None, None, :].to(torch.float32) / 25.0).expand(b, t, -1)
             neighbours = interacted[:, safe_index]  # [B,T,5,S,D]
             neighbour_mask = mask[:, safe_index] & in_range[None, :, :, None]
             k_off = 5
-            bias_term = self.lag_bias[:, (offsets + 2)].repeat_interleave(len(self.names), dim=-1)[None, None]
+            bias_term = self.lag_bias[:, (offsets + 2)].repeat_interleave(len(self.names), dim=-1)[None, None].float()
 
         keys = neighbours.reshape(b, t, k_off * len(self.names), -1)
         key_mask = neighbour_mask.reshape(b, t, k_off * len(self.names))
         q_lag = self.lag_q(pooled).view(b, t, self.lag_heads, self.lag_dh).unsqueeze(-2)  # [B,T,H,1,Dh]
         k_lag = self.lag_k(keys).view(b, t, -1, self.lag_heads, self.lag_dh).permute(0, 1, 3, 2, 4)
         v_lag = self.lag_v(keys).view(b, t, -1, self.lag_heads, self.lag_dh).permute(0, 1, 3, 2, 4)
-        score = (q_lag * k_lag).sum(-1) / (self.lag_dh ** 0.5)
-        score = score + bias_term
+        score = (q_lag.float() * k_lag.float()).sum(-1) / math.sqrt(self.lag_dh) + bias_term
         score = score.masked_fill(~key_mask[:, :, None, :], torch.finfo(score.dtype).min)
         any_keys = key_mask.any(-1)[:, :, None, None]
         score = torch.where(any_keys, score, torch.zeros_like(score))
         lag_weights = torch.softmax(score, dim=-1)
         lag_weights = torch.where(any_keys, lag_weights, torch.zeros_like(lag_weights))
-        aligned = (lag_weights.unsqueeze(-1) * v_lag).sum(-2).reshape(b, t, -1)
+        aligned = (lag_weights.unsqueeze(-1) * v_lag.float()).sum(-2).reshape(b, t, -1).to(pooled.dtype)
         fused = self.output(torch.cat([pooled, self.lag_out(aligned)], dim=-1))
 
         dt_expanded = dt.repeat_interleave(len(self.names), dim=-1)[:, :, None, :]

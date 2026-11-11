@@ -15,6 +15,7 @@ One NPZ stores one sentence/phrase clip or one explicitly defined self-supervise
 | `boxes` | No | `[Tv,4,4]` | Normalized original-frame `xyxy` ROIs in fixed region order |
 | `box_valid` | No | `[Tv,4]` | Per-ROI validity |
 | `box_scores` | No | `[Tv,4]` | Detector score or explicitly uncalibrated availability proxy |
+| `fingerspelling_spans` | No | `[Tv]` | Boolean frame mask indicating localized fingerspelling activity |
 
 Do not include Python objects/pickled arrays. The loader uses `allow_pickle=False`. Integer frames must be `uint8`; floating-point frames must be finite and within `[0,1]`. Unsupported integer types such as `uint16` are rejected instead of silently rescaled.
 
@@ -127,9 +128,11 @@ Self-supervised example (no `translation` required):
 
 `translation` is required for supervised training and evaluation. The loader allows it to be absent only when `require_translation=False` (the self-supervised pretraining path).
 
-## 7. Fingerspelling labels
+## 7. Fingerspelling labels and optional spans
 
-`fingerspelling_text` is an optional complete-clip character string. Current codec characters are lowercase English a–z, digits 0–9, hyphen, apostrophe and space. Unsupported characters raise an error rather than being silently dropped. The current model does not support timestamped local spans within a longer sentence; create a properly annotated segment record if using this objective.
+`fingerspelling_text` is an optional clip-level character string. Current codec characters are lowercase English a–z, digits 0–9, hyphen, apostrophe and space. Unsupported characters raise an error rather than being silently dropped.
+
+Optionally, callers may supply localized fingerspelling time intervals either as `fingerspelling_spans` in the JSONL manifest (`[[start_sec, end_sec], ...]` relative to clip start with `start_sec <= end_sec`) or as a `[Tv]` boolean array `fingerspelling_spans` in the NPZ (NPZ array takes precedence if both are present). When spans are omitted, `span_routing=true` trains the temporal frame spotter using clip-level multiple-instance learning (`compute_fingerspelling_spotting_loss`).
 
 ## 8. Data rights and quality
 

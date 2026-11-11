@@ -203,8 +203,15 @@ class ISLVideoDataset(Dataset):
             if fingerspelling_text is not None and not isinstance(fingerspelling_text, str):
                 raise ValueError(f"{self.path}:{line_no} field 'fingerspelling_text' must be a string")
             fingerspelling_spans = row.get("fingerspelling_spans")
-            if fingerspelling_spans is not None and not isinstance(fingerspelling_spans, list):
-                raise ValueError(f"{self.path}:{line_no} field 'fingerspelling_spans' must be a list of [start,end] pairs")
+            if fingerspelling_spans is not None:
+                if not isinstance(fingerspelling_spans, list):
+                    raise ValueError(f"{self.path}:{line_no} field 'fingerspelling_spans' must be a list of [start,end] pairs")
+                for span in fingerspelling_spans:
+                    if not isinstance(span, (list, tuple)) or len(span) != 2:
+                        raise ValueError(f"{self.path}:{line_no} each fingerspelling_spans entry must be a [start_sec, end_sec] pair")
+                    s_t, e_t = float(span[0]), float(span[1])
+                    if not (math.isfinite(s_t) and math.isfinite(e_t) and e_t >= s_t):
+                        raise ValueError(f"{self.path}:{line_no} fingerspelling_spans intervals must be finite with start <= end")
             self.records.append(ManifestRecord(
                 uid=row["uid"], npz=row["npz"], translation=translation,
                 source_id=row["source_id"], signer_id=signer_id,
@@ -337,6 +344,8 @@ class ISLVideoDataset(Dataset):
                 if not isinstance(item, (list, tuple)) or len(item) != 2:
                     raise ValueError("Each fingerspelling_spans entry must be a [start_sec, end_sec] pair")
                 s_t, e_t = float(item[0]), float(item[1])
+                if not (math.isfinite(s_t) and math.isfinite(e_t) and e_t >= s_t):
+                    raise ValueError("Each fingerspelling_spans interval must be finite with start <= end")
                 fs_spans |= (rel_times >= s_t) & (rel_times <= e_t)
             fs_span_known = True
         else:
@@ -382,10 +391,15 @@ def collate_examples(items: list[dict]) -> dict:
     boxes = pad("boxes", (4, 4), torch.float32)
     box_valid = pad("box_valid", (4,), torch.bool)
     box_scores = pad("box_scores", (4,), torch.float32)
-    if "fingerspelling_spans" in items[0]:
-        fs_spans = pad("fingerspelling_spans", (), torch.bool)
-        fs_span_known = torch.tensor([bool(x.get("fingerspelling_span_known", False)) for x in items],
-                                     dtype=torch.bool)
+    if any("fingerspelling_spans" in x for x in items):
+        fs_spans = torch.zeros((b, max_t), dtype=torch.bool)
+        for i, item in enumerate(items):
+            if "fingerspelling_spans" in item:
+                span = item["fingerspelling_spans"]
+                fs_spans[i, :span.shape[0]] = span
+        fs_span_known = torch.tensor(
+            [bool(x.get("fingerspelling_span_known", False)) for x in items], dtype=torch.bool
+        )
     else:
         fs_spans = torch.zeros((b, max_t), dtype=torch.bool)
         fs_span_known = torch.zeros(b, dtype=torch.bool)

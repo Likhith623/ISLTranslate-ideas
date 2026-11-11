@@ -113,7 +113,7 @@ A learned bank of up to 32 latent queries (research config) cross-attends to the
 
 A learned linear/LayerNorm bridge maps frame and active plan tokens to the configured T5 hidden dimension. When `plan_semantic_ot=true`, unconstrained entropic OT computes a weighted combination of frame-level OT (`visual_semantic_ot_loss`) and active-plan OT (`plan_semantic_ot_loss`).
 
-When `use_counterfactual_grounding=true` and `counterfactual_weight > 0`, a detached counterfactual decoder forward pass swaps visual+plan encoder embeddings across the batch (`B >= 2`) or supplies a single blank zero token (`B == 1`), computing a token-level NLL margin hinge (`relu(margin - (nll_cf - nll_real))`) and symmetric distribution shift floor (`relu(kl_margin - KL(p_real || p_cf))`) without backpropagating gradients through synthetic mismatched inputs. This explicitly penalizes language-prior bypass where FLAN-T5 ignores visual conditioning.
+When `use_counterfactual_grounding=true` and `counterfactual_weight > 0`, a detached counterfactual decoder forward pass swaps visual+plan encoder embeddings across the batch (`B >= 2`, falling back per sample to a blank zero-visual token whenever `roll(1)` collides on identical target `labels`) or supplies a single blank zero token (`B == 1`), computing a token-level NLL margin hinge (`relu(margin - (nll_cf - nll_real))`) and symmetric distribution shift floor (`relu(kl_margin - KL(p_real || p_cf))`) without backpropagating gradients through synthetic mismatched inputs. This explicitly penalizes language-prior bypass where FLAN-T5 ignores visual conditioning.
 
 ## 8. High-capacity v2 configuration & v1 baseline ablation
 

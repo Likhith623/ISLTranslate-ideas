@@ -84,7 +84,8 @@ class PatchVisionTransformer(nn.Module):
     def forward(self, images: torch.Tensor) -> torch.Tensor:
         if images.ndim != 4 or images.shape[1] != 3:
             raise ValueError("vision images must have shape [N,3,H,W]")
-        x = self.patch(images).flatten(2).transpose(1, 2)
+        patched = self.patch(images)
+        x = patched.flatten(2).transpose(1, 2)
         cls = self.cls.expand(x.shape[0], -1, -1)
         x = torch.cat([cls, x], dim=1)
         if x.shape[1] != self.pos.shape[1]:
@@ -92,7 +93,7 @@ class PatchVisionTransformer(nn.Module):
             cls_pos = self.pos[:, :1]
             patch_pos = self.pos[:, 1:]
             old = int(math.sqrt(patch_pos.shape[1]))
-            new_h, new_w = self.patch(images).shape[-2:]
+            new_h, new_w = patched.shape[-2:]
             patch_pos = patch_pos.reshape(1, old, old, self.dim).permute(0, 3, 1, 2)
             patch_pos = F.interpolate(patch_pos, size=(new_h, new_w), mode="bicubic", align_corners=False)
             patch_pos = patch_pos.flatten(2).transpose(1, 2)
@@ -114,14 +115,16 @@ class TimmBackbone(nn.Module):
         self.model = timm.create_model(model_name, pretrained=pretrained, num_classes=0,
                                        dynamic_img_size=True)
         self.dim = int(getattr(self.model, "num_features"))
-        pretrained_cfg = getattr(self.model, "pretrained_cfg", {}) or {}
+        pretrained_cfg = getattr(self.model, "pretrained_cfg", None) or getattr(self.model, "default_cfg", None) or {}
         mean = pretrained_cfg.get("mean", (0.485, 0.456, 0.406))
         std = pretrained_cfg.get("std", (0.229, 0.224, 0.225))
         self.register_buffer("mean", torch.tensor(mean).view(1, 3, 1, 1), persistent=False)
         self.register_buffer("std", torch.tensor(std).view(1, 3, 1, 1), persistent=False)
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
-        images = (images - self.mean.to(images)) / self.std.to(images)
+        images = (images - self.mean.to(device=images.device, dtype=images.dtype)) / self.std.to(
+            device=images.device, dtype=images.dtype
+        )
         out = self.model(images)
         if isinstance(out, (tuple, list)):
             out = out[-1]
@@ -183,8 +186,6 @@ class AppearanceExpert(nn.Module):
         if roi_valid.shape != crops.shape[:3]:
             raise ValueError("roi_valid must have shape [B,T,4]")
         b, t, r, c, h, w = crops.shape
-        flat = crops.reshape(b * t * r, c, h, w)
-        valid = roi_valid.reshape(b * t * r).bool()
         outputs = {}
         for name, index, backbone in (
             ("face", 0, self.face), ("left_hand", 1, self.hand),
@@ -192,10 +193,13 @@ class AppearanceExpert(nn.Module):
         ):
             x = crops[:, :, index].reshape(b * t, c, h, w)
             m = roi_valid[:, :, index].reshape(b * t).bool()
-            # Encode only present regions to avoid wasting work; scatter back into T.
-            encoded = x.new_zeros((b * t, self.output_dim))
+            # Encode only present regions to avoid wasting work; allocate from output dtype for AMP safety.
             if m.any():
-                encoded[m] = backbone(x[m])
+                feat = backbone(x[m])
+                encoded = feat.new_zeros((b * t, self.output_dim))
+                encoded[m] = feat
+            else:
+                encoded = x.new_zeros((b * t, self.output_dim))
             outputs[name] = encoded.reshape(b, t, self.output_dim)
         return outputs
 

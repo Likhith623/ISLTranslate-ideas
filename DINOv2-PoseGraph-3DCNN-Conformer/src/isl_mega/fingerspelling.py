@@ -104,13 +104,13 @@ class FingerspellingExpert(nn.Module):
             ctx = torch.where(available[..., None], self.spot_conv(h_clean.transpose(1, 2)).transpose(1, 2),
                               torch.zeros_like(h_clean))
             spot_logits = self.spot_head(torch.cat([h_clean, F.gelu(ctx)], dim=-1)).squeeze(-1)
-            spot_prob = torch.sigmoid(spot_logits) * available.to(hidden.dtype)
+            spot_prob = torch.sigmoid(spot_logits.float()).to(hidden.dtype) * available.to(hidden.dtype)
             spot_logits = torch.where(available, spot_logits, torch.zeros_like(spot_logits))
-            route = gate * spot_prob[..., None]
+            route = (gate * spot_prob[..., None]).to(char_context.dtype)
         else:
             spot_logits = None
             spot_prob = available.to(hidden.dtype)
-            route = gate
+            route = gate.to(char_context.dtype)
         fused = self.norm(hidden + route * char_context)
         fused = torch.where(available[..., None], fused, torch.zeros_like(fused))
         logits = torch.where(available[..., None], logits, torch.zeros_like(logits))

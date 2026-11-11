@@ -28,9 +28,17 @@ def main():
         np.savez_compressed(out / npz_name, frames=frames, video_timestamps=ts,
                             pose_xy=xy, pose_timestamps=ts, pose_confidence=conf,
                             pose_valid=valid)
-        rows.append({"uid": f"synthetic-{i:04d}", "npz": npz_name,
-                     "translation": "this is a synthetic smoke test sentence",
-                     "source_id": f"source-{i:04d}", "signer_id": f"signer-{i:04d}"})
+        row = {
+            "uid": f"synthetic-{i:04d}",
+            "npz": npz_name,
+            "translation": "this is a synthetic smoke test sentence",
+            "source_id": f"source-{i:04d}",
+            "signer_id": f"signer-{i:04d}",
+        }
+        if i % 3 == 0:
+            row["fingerspelling_text"] = "abc"
+            row["fingerspelling_spans"] = [[float(ts[1]), float(ts[4])]]
+        rows.append(row)
     (out / "all.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     print(f"Created {len(rows)} synthetic records in {out}. DO NOT use them as research data.")
 

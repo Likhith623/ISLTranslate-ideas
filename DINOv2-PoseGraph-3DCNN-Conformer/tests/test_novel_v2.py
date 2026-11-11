@@ -18,7 +18,7 @@ from isl_mega.losses import (
     compute_fingerspelling_spotting_loss,
     compute_fusion_entropy_loss,
 )
-from isl_mega.model import build_model
+from isl_mega.model import ISLMEGA, build_model
 from isl_mega.planning import LatentPlanGrounder
 from isl_mega.pose import PoseExpert, estimate_torso_scale
 from isl_mega.temporal import HierarchicalTemporalEncoder
@@ -99,6 +99,10 @@ class MockT5(torch.nn.Module):
                 logits.reshape(-1, logits.shape[-1]), labels.reshape(-1), ignore_index=-100
             )
         return SimpleNamespace(loss=loss, logits=logits, encoder_last_hidden_state=inputs_embeds)
+
+    def generate(self, encoder_outputs, attention_mask, **kwargs):
+        hidden = encoder_outputs.last_hidden_state
+        return torch.ones((hidden.shape[0], 4), dtype=torch.long, device=hidden.device)
 
 
 def test_v2_and_ablation_configs_validate_and_reject_bad_flags(tmp_path):
@@ -318,4 +322,126 @@ def test_full_v2_model_end_to_end_backward_and_padding_invariance():
     total.backward()
     grads = [p.grad for p in model.parameters() if p.requires_grad and p.grad is not None]
     assert grads and all(torch.isfinite(g).all() for g in grads)
+
+
+def test_single_frame_adaptive_temporal_and_full_model_backward_finite():
+    cfg = v2_smoke_config()
+    model = ISLMEGA(cfg, decoder=T5VisualDecoder(MockT5(dim=cfg.temporal.dim, vocab=40), cfg.temporal.dim))
+    model.train()
+    batch = make_batch_inputs(batch=1, time=1)
+    batch["lengths"] = torch.tensor([1])
+    labels = torch.tensor([[1, 2, 3, -100]])
+    out = model(labels=labels, semantic_ot=True, counterfactual_grounding=True, **batch)
+    loss = (
+        out["decoder_loss"]
+        + out["decoder_semantic_ot_loss"]
+        + out["decoder_counterfactual_loss"]
+        + out["plan_diversity_loss"]
+        + out["plan_order_loss"]
+    )
+    loss.backward()
+    grads = [p.grad for p in model.parameters() if p.requires_grad and p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
+
+
+def test_wrist_missing_hand_falls_back_to_centroid_preserving_finger_geometry():
+    cfg = v2_smoke_config().pose
+    cfg.cross_articulator_graph = False
+    expert = PoseExpert(cfg).eval()
+    captured = {}
+
+    class CaptureRight(torch.nn.Module):
+        def forward(self, features, xy, valid, scale=None, extra_emb=None):
+            captured["features"] = features.detach().clone()
+            return torch.zeros((features.shape[0], features.shape[1], cfg.hidden_dim), dtype=features.dtype), valid.any(-1)
+
+        def forward_nodes(self, *args, **kwargs):
+            return self.forward(*args, **kwargs)
+
+    expert.right = CaptureRight()
+    b, t = 1, 2
+    xy = torch.full((b, t, 66, 2), 0.5)
+    xy[:, :, 21:42, 0] = 0.6
+    xy[:, :, 22:42, 1] = torch.linspace(0.3, 0.7, 20)
+    valid = torch.ones((b, t, 66), dtype=torch.bool)
+    valid[:, :, 21] = False  # Right wrist missing, all 20 right-hand finger landmarks valid.
+    conf = valid.float()
+    known = torch.ones_like(valid)
+    times = torch.tensor([[0.0, 0.04]])
+    frame_mask = torch.ones((b, t), dtype=torch.bool)
+    out = expert(xy, conf, valid, known, times, frame_mask)
+    assert out["available"]["right_hand"].all()
+    # Relative y coordinates of fingers (channel 3) must remain preserved via hand centroid fallback.
+    assert captured["features"][0, 0, 1:, 3].abs().max().item() > 0.05
+
+
+def test_config_validation_and_span_error_handling(tmp_path):
+    bad_kernels = tmp_path / "bad_kernels.yaml"
+    bad_kernels.write_text("temporal:\n  dim: 64\n  local_kernels: [3, 5, 7]\n  local_dilations: [1, 1, 1]\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="divisible"):
+        load_config(bad_kernels)
+
+    bad_nan = tmp_path / "bad_nan.yaml"
+    bad_nan.write_text("train:\n  visual_lr: .nan\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Invalid optimizer settings"):
+        load_config(bad_nan)
+
+    bad_manifest = tmp_path / "bad_spans.jsonl"
+    bad_manifest.write_text(
+        json.dumps({"uid": "u", "npz": "x.npz", "translation": "ok", "source_id": "s", "fingerspelling_spans": [[0.5, 0.1]]}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="start <= end"):
+        ISLVideoDataset(bad_manifest, crop_size=16, image_size=32)
+
+
+def test_integrated_v2_decoder_duplicate_label_fallback_generate_and_train_epoch(tmp_path):
+    import importlib.util
+    cfg = v2_smoke_config()
+    mock_t5 = MockT5(dim=cfg.temporal.dim, vocab=40)
+    model = ISLMEGA(cfg, decoder=T5VisualDecoder(mock_t5, cfg.temporal.dim))
+    batch = make_batch_inputs(batch=2, time=8)
+    # Identical labels across batch items force per-sample zero-counterfactual fallback instead of self-contrast.
+    same_labels = torch.tensor([[1, 2, 3, -100], [1, 2, 3, -100]])
+    out = model(labels=same_labels, semantic_ot=True, counterfactual_grounding=True, **batch)
+    assert torch.isfinite(out["decoder_counterfactual_loss"])
+    assert torch.isfinite(out["decoder_counterfactual_nll_gap"])
+    (out["decoder_loss"] + out["decoder_counterfactual_loss"]).backward()
+    model.eval()
+    gen = model.generate(num_beams=1, max_new_tokens=4, **batch)
+    assert gen.shape == (2, 4)
+
+    # Exercise scripts/train.py:run_epoch end-to-end with MockTokenizer + span annotations.
+    script = Path(__file__).parents[1] / "scripts" / "train.py"
+    spec = importlib.util.spec_from_file_location("isl_mega_train_v2_test", script)
+    train_mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(train_mod)
+
+    class MockTokenizer:
+        def __call__(self, texts, padding=True, truncation=False, return_tensors="pt"):
+            rows = [[((i + j) % 10) + 1 for j in range(4)] for i, _ in enumerate(texts)]
+            ids = torch.tensor(rows, dtype=torch.long)
+            return SimpleNamespace(input_ids=ids, attention_mask=torch.ones_like(ids))
+
+    model2 = ISLMEGA(cfg, decoder=T5VisualDecoder(MockT5(dim=cfg.temporal.dim, vocab=40), cfg.temporal.dim))
+    opt = torch.optim.AdamW(model2.parameters(), lr=1e-4)
+    collate_batch = {
+        "uids": ["u1", "u2"],
+        "source_ids": ["src1", "src2"],
+        "signer_ids": ["sig1", "sig2"],
+        **batch,
+        "frame_mask": torch.arange(8)[None] < batch["lengths"][:, None],
+        "translations": ["hello world", "good morning"],
+        "fingerspelling_texts": ["ab", ""],
+        "fingerspelling_spans": torch.tensor([
+            [0, 1, 1, 1, 1, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0],
+        ], dtype=torch.bool),
+        "fingerspelling_span_known": torch.tensor([True, False]),
+    }
+    stats = train_mod.run_epoch(model2, [collate_batch], MockTokenizer(), cfg, torch.device("cpu"), optimizer=opt)
+    assert stats["batches"] == 1
+    assert np.isfinite(stats["loss"]) and np.isfinite(stats["cf_nll_gap"])
+
 

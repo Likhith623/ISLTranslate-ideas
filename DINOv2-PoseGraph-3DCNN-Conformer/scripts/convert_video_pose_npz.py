@@ -28,12 +28,19 @@ def main():
         missing = required - set(pose.files)
         if missing:
             raise ValueError(f"Pose NPZ missing: {sorted(missing)}")
+        pose_xy = np.asarray(pose["pose_xy"], dtype=np.float32)
+        pose_ts = np.asarray(pose["pose_timestamps"], dtype=np.float64) + args.pose_time_offset_seconds
+        if pose_ts.ndim != 1 or len(pose_ts) < 1 or not np.isfinite(pose_ts).all():
+            raise ValueError("pose_timestamps must be a nonempty finite 1-D vector")
+        if len(pose_ts) > 1 and np.any(np.diff(pose_ts) <= 0):
+            raise ValueError("pose_timestamps must be strictly increasing")
+        if pose_xy.shape != (len(pose_ts), 66, 2):
+            raise ValueError(f"pose_xy must have shape [Tp,66,2], got {pose_xy.shape}")
         pose_payload = {
-            "pose_xy": np.asarray(pose["pose_xy"], dtype=np.float32),
-            "pose_timestamps": np.asarray(pose["pose_timestamps"], dtype=np.float64)
-                    + args.pose_time_offset_seconds,
+            "pose_xy": pose_xy,
+            "pose_timestamps": pose_ts,
         }
-        for key in ("pose_confidence", "pose_valid", "boxes", "box_valid", "box_scores"):
+        for key in ("pose_confidence", "pose_valid", "boxes", "box_valid", "box_scores", "fingerspelling_spans"):
             if key in pose:
                 pose_payload[key] = np.asarray(pose[key])
     cap = cv2.VideoCapture(args.video)
@@ -67,7 +74,7 @@ def main():
         origin = (first_ms / 1000.0) if first_ms is not None else 0.0
         video_times = origin + np.arange(len(frames), dtype=np.float64) / fps
     payload = {
-        "frames": np.stack(frames), "video_timestamps": video_times.astype(np.float32),
+        "frames": np.stack(frames), "video_timestamps": video_times.astype(np.float64),
         **pose_payload,
     }
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

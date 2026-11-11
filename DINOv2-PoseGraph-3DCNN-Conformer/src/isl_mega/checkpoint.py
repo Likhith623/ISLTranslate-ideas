@@ -25,8 +25,13 @@ def save_checkpoint(path, model, optimizer=None, scheduler=None, epoch=0, step=0
     if scheduler is not None:
         state["scheduler"] = scheduler.state_dict()
     temp = path.with_suffix(path.suffix + ".tmp")
-    torch.save(state, temp)
-    os.replace(temp, path)
+    try:
+        torch.save(state, temp)
+        os.replace(temp, path)
+    except Exception:
+        if temp.exists():
+            temp.unlink()
+        raise
 
 
 def load_checkpoint(path, model, optimizer=None, scheduler=None, map_location="cpu", strict=True,

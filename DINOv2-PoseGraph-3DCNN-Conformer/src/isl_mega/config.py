@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 import json
+import math
 
 
 @dataclass
@@ -43,8 +44,8 @@ class VisionConfig:
         if self.dim % self.heads:
             raise ValueError("vision.dim must be divisible by vision.heads")
         _dropout(self.dropout, "vision.dropout")
-        if self.mlp_ratio <= 0:
-            raise ValueError("vision.mlp_ratio must be positive")
+        if not math.isfinite(self.mlp_ratio) or self.mlp_ratio <= 0:
+            raise ValueError("vision.mlp_ratio must be positive and finite")
 
 
 @dataclass
@@ -72,9 +73,9 @@ class PoseConfig:
         if self.layers <= 0 or self.cross_articulator_layers <= 0:
             raise ValueError("pose.layers and cross_articulator_layers must be positive")
         _dropout(self.dropout, "pose.dropout")
-        if self.max_interpolation_gap_seconds < 0:
+        if not _finite_in_bounds(self.max_interpolation_gap_seconds, 0.0, None):
             raise ValueError("max_interpolation_gap_seconds cannot be negative")
-        if not 0 <= self.min_confidence <= 1:
+        if not _finite_in_bounds(self.min_confidence, 0.0, 1.0):
             raise ValueError("pose.min_confidence must be in [0,1]")
 
 
@@ -107,8 +108,8 @@ class FusionConfig:
             raise ValueError("fusion.dim must be >=2 and divisible by fusion.num_heads")
         if self.layers <= 0 or self.quality_dim != 5:
             raise ValueError("fusion.layers must be positive and quality_dim must equal 5")
-        if self.lag_window_seconds <= 0 or self.lag_radius_frames < 0:
-            raise ValueError("fusion.lag_window_seconds must be positive and lag_radius_frames >= 0")
+        if not _finite_in_bounds(self.lag_window_seconds, 0.0, None, lower_inclusive=False) or self.lag_radius_frames < 0:
+            raise ValueError("fusion.lag_window_seconds must be positive/finite and lag_radius_frames >= 0")
         _dropout(self.dropout, "fusion.dropout")
 
 
@@ -157,6 +158,8 @@ class TemporalConfig:
             raise ValueError("temporal layer and FFN sizes must be positive")
         if not self.local_kernels or len(self.local_kernels) != len(self.local_dilations):
             raise ValueError("local_kernels and local_dilations must be nonempty and equal length")
+        if self.dim % len(self.local_kernels):
+            raise ValueError("temporal.dim must be divisible by len(temporal.local_kernels)")
         if any(k <= 0 or k % 2 == 0 for k in self.local_kernels):
             raise ValueError("All local temporal kernels must be positive odd integers")
         if any(d <= 0 for d in self.local_dilations):
@@ -167,11 +170,11 @@ class TemporalConfig:
             raise ValueError("planner settings must be positive")
         if not 1 <= self.min_plan_queries <= self.planner_queries:
             raise ValueError("min_plan_queries must be in [1, planner_queries]")
-        if self.plan_order_margin < 0:
+        if not _finite_in_bounds(self.plan_order_margin, 0.0, None):
             raise ValueError("plan_order_margin cannot be negative")
         if self.relative_time_buckets < 4 or self.relative_time_buckets % 2:
             raise ValueError("relative_time_buckets must be even and >= 4")
-        if self.max_elapsed_seconds <= 1e-5:
+        if not _finite_in_bounds(self.max_elapsed_seconds, 1e-5, None, lower_inclusive=False):
             raise ValueError("max_elapsed_seconds must be greater than 1e-5 seconds")
         _dropout(self.dropout, "temporal.dropout")
 
@@ -196,11 +199,13 @@ class DecoderConfig:
     def validate(self) -> None:
         if not self.model_name:
             raise ValueError("decoder.model_name is required")
-        if self.max_target_tokens <= 0 or self.ot_iterations <= 0 or self.ot_epsilon <= 0:
-            raise ValueError("Decoder token/OT settings must be positive")
-        if not 0.0 <= self.plan_ot_alpha <= 1.0:
+        if (self.max_target_tokens <= 0 or self.ot_iterations <= 0
+                or not _finite_in_bounds(self.ot_epsilon, 0.0, None, lower_inclusive=False)):
+            raise ValueError("Decoder token/OT settings must be positive and finite")
+        if not _finite_in_bounds(self.plan_ot_alpha, 0.0, 1.0):
             raise ValueError("decoder.plan_ot_alpha must be in [0,1]")
-        if self.counterfactual_margin < 0 or self.counterfactual_kl_margin < 0:
+        if (not _finite_in_bounds(self.counterfactual_margin, 0.0, None)
+                or not _finite_in_bounds(self.counterfactual_kl_margin, 0.0, None)):
             raise ValueError("counterfactual margins cannot be negative")
         if self.counterfactual_mode not in {"batch_swap_or_zero", "zero"}:
             raise ValueError("decoder.counterfactual_mode must be 'batch_swap_or_zero' or 'zero'")
@@ -254,9 +259,12 @@ class TrainConfig:
     def validate(self) -> None:
         if self.epochs <= 0 or self.batch_size <= 0:
             raise ValueError("epochs and batch_size must be positive")
-        if min(self.visual_lr, self.decoder_lr, self.grad_clip_norm) <= 0 or self.weight_decay < 0:
+        if (not _finite_in_bounds(self.visual_lr, 0.0, None, lower_inclusive=False)
+                or not _finite_in_bounds(self.decoder_lr, 0.0, None, lower_inclusive=False)
+                or not _finite_in_bounds(self.grad_clip_norm, 0.0, None, lower_inclusive=False)
+                or not _finite_in_bounds(self.weight_decay, 0.0, None)):
             raise ValueError("Invalid optimizer settings")
-        if not 0 <= self.warmup_ratio < 1:
+        if not _finite_in_bounds(self.warmup_ratio, 0.0, 1.0, upper_inclusive=False):
             raise ValueError("warmup_ratio must be in [0,1)")
         if self.amp_dtype not in {"bf16", "fp16", "none"}:
             raise ValueError("amp_dtype must be bf16, fp16, or none")
@@ -267,10 +275,10 @@ class TrainConfig:
             "plan_diversity_weight", "plan_order_weight", "fs_spot_weight",
             "fusion_entropy_weight", "counterfactual_weight",
         ):
-            if getattr(self, name) < 0:
-                raise ValueError(f"{name} cannot be negative")
-        if self.cross_modal_temperature <= 0:
-            raise ValueError("cross_modal_temperature must be positive")
+            if not _finite_in_bounds(getattr(self, name), 0.0, None):
+                raise ValueError(f"{name} cannot be negative or nonfinite")
+        if not _finite_in_bounds(self.cross_modal_temperature, 0.0, None, lower_inclusive=False):
+            raise ValueError("cross_modal_temperature must be positive and finite")
         if self.label_smoothing >= 1.0:
             raise ValueError("label_smoothing must be < 1")
 
@@ -316,8 +324,24 @@ class ISLMEGAConfig:
         path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
 
 
+def _finite_in_bounds(
+    value: float,
+    low: float | None,
+    high: float | None,
+    lower_inclusive: bool = True,
+    upper_inclusive: bool = True,
+) -> bool:
+    if value is None or isinstance(value, bool) or not math.isfinite(value):
+        return False
+    if low is not None and (value < low if lower_inclusive else value <= low):
+        return False
+    if high is not None and (value > high if upper_inclusive else value >= high):
+        return False
+    return True
+
+
 def _dropout(value: float, name: str) -> None:
-    if not 0 <= value < 1:
+    if not _finite_in_bounds(value, 0.0, 1.0, upper_inclusive=False):
         raise ValueError(f"{name} must be in [0,1)")
 
 
