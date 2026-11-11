@@ -67,6 +67,7 @@ def compute_fingerspelling_spotting_loss(
     texts: list[str],
     span_targets: torch.Tensor | None = None,
     span_known: torch.Tensor | None = None,
+    label_known: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Supervise frame-level fingerspelling activity logits via spans or clip-level MIL."""
     if spot_logits is None or availability is None:
@@ -77,6 +78,9 @@ def compute_fingerspelling_spotting_loss(
         raise ValueError("input_lengths and texts must match spot_logits batch size")
     losses = []
     for i, text in enumerate(texts):
+        # Do not conflate unannotated/unknown clips with explicit negatives.
+        if label_known is not None and not bool(label_known[i]):
+            continue
         length = int(input_lengths[i])
         valid = availability[i, :length].bool()
         if not valid.any():
@@ -93,7 +97,7 @@ def compute_fingerspelling_spotting_loss(
             target_frac = min(0.65, max(0.10, float(len(text.strip())) / max(float(len(logits_i)), 1.0)))
             losses.append(peak_loss + 0.5 * (mean_prob - target_frac).square())
         else:
-            # Explicit non-fingerspelling clip suppresses false character spotting.
+            # Explicit annotated non-fingerspelling clip suppresses false character spotting.
             losses.append(0.25 * F.binary_cross_entropy_with_logits(logits_i, torch.zeros_like(logits_i)))
     return torch.stack(losses).mean() if losses else spot_logits.sum() * 0.0
 

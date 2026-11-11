@@ -12,7 +12,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("manifest", help="JSONL manifest containing source_id")
     p.add_argument("--out", default="data/manifests")
-    p.add_argument("--group-key", default="source_id", choices=["source_id", "signer_id"])
+    p.add_argument("--group-key", default="source_id",
+                   choices=["source_id", "signer_id", "joint_source_signer"])
     p.add_argument("--seed", type=int, default=2026)
     p.add_argument("--ratios", nargs=3, type=float, default=(0.8, 0.1, 0.1))
     args = p.parse_args()
@@ -22,7 +23,12 @@ def main():
         npz = Path(row["npz"])
         row["npz"] = str((source_path.parent / npz).resolve()) if not npz.is_absolute() else str(npz)
     splits = write_grouped_splits(rows, args.out, tuple(args.ratios), args.seed, args.group_key)
-    print({k: len(v) for k, v in splits.items()})
+    diag_path = Path(args.out) / "split_diagnostics.json"
+    if diag_path.exists():
+        print(f"Split diagnostics written to {diag_path}:")
+        print(diag_path.read_text(encoding="utf-8"))
+    else:
+        print({k: len(v) for k, v in splits.items()})
 
 if __name__ == "__main__":
     main()

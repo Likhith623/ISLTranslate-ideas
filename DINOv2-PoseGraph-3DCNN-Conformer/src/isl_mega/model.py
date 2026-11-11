@@ -32,7 +32,7 @@ class ISLMEGA(nn.Module):
         self.config = config
         self.appearance = AppearanceExpert(config.vision)
         self.pose = PoseExpert(config.pose)
-        self.motion = MotionExpert(config.motion)
+        self.motion = MotionExpert(config.motion) if config.motion.enabled else None
         self.fingerspelling = FingerspellingExpert(
             config.vision.dim, config.pose.hidden_dim, config.fingerspelling.hidden_dim,
             config.fingerspelling.layers, config.fingerspelling.dropout,
@@ -80,7 +80,12 @@ class ISLMEGA(nn.Module):
         pose = self.pose(pose_xy, pose_confidence, pose_valid, confidence_known,
                          timestamps, frame_mask)
         body_available = box_valid[:, :, 3].bool() & frame_mask
-        motion = self.motion(crops[:, :, 3:4], frame_mask, body_available)
+        if self.motion is not None:
+            motion = self.motion(crops[:, :, 3:4], frame_mask, body_available)
+            motion_avail = body_available
+        else:
+            motion = visual["body"].new_zeros((b, t, self.config.motion.hidden_dim))
+            motion_avail = torch.zeros_like(frame_mask)
         fs = None
         if self.fingerspelling is not None:
             left_fs_available = effective_box_valid[:, :, 1] | pose["available"]["left_hand"]
@@ -113,9 +118,11 @@ class ISLMEGA(nn.Module):
             pair_valid = body_available[:, 1:] & body_available[:, :-1]
             raw_diff = (body[:, 1:] - body[:, :-1]).abs().mean(dim=(2, 3, 4))
             diff_energy[:, 1:] = torch.where(pair_valid, raw_diff, torch.zeros_like(raw_diff))
-        motion_avail = body_available
-        quality["motion"] = torch.stack([motion_avail.float(), diff_energy,
-                                          roi_q[:, :, 3, 3], motion_avail.float(), frame_mask.float()], -1)
+        if self.motion is not None:
+            quality["motion"] = torch.stack([motion_avail.float(), diff_energy,
+                                              roi_q[:, :, 3, 3], motion_avail.float(), frame_mask.float()], -1)
+        else:
+            quality["motion"] = torch.zeros((b, t, 5), device=frames.device, dtype=frames.dtype)
         if fs is not None:
             left_ok = effective_box_valid[:, :, 1] | pose["available"]["left_hand"]
             right_ok = effective_box_valid[:, :, 2] | pose["available"]["right_hand"]

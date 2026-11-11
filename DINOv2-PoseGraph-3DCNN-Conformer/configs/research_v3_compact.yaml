@@ -1,0 +1,130 @@
+# ISL-MEGA v3 Compact Research Baseline
+# Implements the audit-recommended lean, experimentally tractable configuration:
+# - Shared ViT-B/14 (224px, frozen backbone initially)
+# - Confidence-aware 66-point pose graph (cross-articulator relational graph, active gate)
+# - Quality-conditioned RGB/pose fusion (asynchronous continuous-time lag bias)
+# - Compact temporal Conformer (6 layers, 768-dim)
+# - FLAN-T5-base decoder (instead of 3B T5-XL)
+# - Speculative losses disabled (entropy loss = 0, OT = 0, counterfactual = 0)
+# Primary falsifiable hypothesis: confidence-aware anatomical RGB-pose fusion
+# improves translation and corruption robustness over unweighted / single-modality baselines.
+
+vision:
+  backend: timm
+  timm_model_name: vit_base_patch14_dinov2.lvd142m
+  pretrained: true
+  image_size: 224
+  crop_size: 224
+  patch_size: 14
+  dim: 768
+  depth: 12
+  heads: 12
+  mlp_ratio: 4.0
+  dropout: 0.1
+  separate_hand_face_body: false
+  freeze_backbone: true
+
+pose:
+  num_landmarks: 66
+  node_dim: 11
+  hidden_dim: 512
+  layers: 3
+  heads: 8
+  dropout: 0.1
+  min_confidence: 0.0
+  max_interpolation_gap_seconds: 0.20
+  normalize_by_shoulder_span: true
+  share_hand_encoder: true
+  cross_articulator_graph: true
+  cross_articulator_layers: 1
+  cross_articulator_gate_init: 0.1
+
+motion:
+  enabled: false
+  hidden_dim: 512
+  temporal_kernel: 7
+  dropout: 0.1
+
+fusion:
+  dim: 768
+  num_heads: 12
+  layers: 2
+  quality_dim: 5
+  dropout: 0.1
+  continuous_time_lag: true
+  lag_window_seconds: 0.20
+  lag_radius_frames: 4
+  reliability_uncertainty_gate: true
+
+fingerspelling:
+  enabled: true
+  hidden_dim: 256
+  layers: 2
+  dropout: 0.1
+  span_routing: true
+
+temporal:
+  dim: 768
+  local_kernels: [3, 5, 9, 15]
+  local_dilations: [1, 1, 2, 4]
+  global_layers: 6
+  heads: 12
+  ffn_dim: 2048
+  dropout: 0.1
+  relative_time_buckets: 32
+  max_elapsed_seconds: 30.0
+  coarse_stride: 2
+  detail_window: 7
+  planner_queries: 16
+  planner_layers: 2
+  adaptive_consolidation: true
+  diverse_ordered_planning: false
+  dynamic_plan_routing: false
+
+decoder:
+  model_name: google/flan-t5-base
+  local_files_only: false
+  max_target_tokens: 128
+  freeze_decoder: false
+  use_semantic_ot: false
+  ot_epsilon: 0.08
+  ot_iterations: 30
+  plan_semantic_ot: false
+  use_counterfactual_grounding: false
+
+data:
+  train_manifest: data/manifests/train.jsonl
+  valid_manifest: data/manifests/valid.jsonl
+  test_manifest: data/manifests/test.jsonl
+  image_size: 224
+  crop_size: 224
+  num_workers: 4
+  pin_memory: true
+  max_target_tokens: 128
+  strict_source_disjoint: true
+  require_signer_disjoint: false
+
+train:
+  epochs: 30
+  batch_size: 4
+  visual_lr: 0.0002
+  decoder_lr: 0.00005
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip_norm: 1.0
+  amp_dtype: bf16
+  ctc_weight: 0.10
+  fs_spot_weight: 0.05
+  ot_weight: 0.0
+  cross_modal_weight: 0.05
+  cross_modal_temperature: 0.07
+  plan_diversity_weight: 0.0
+  plan_order_weight: 0.0
+  fusion_entropy_weight: 0.0
+  counterfactual_weight: 0.0
+  label_smoothing: 0.0
+  seed: 2026
+  output_dir: runs/isl-mega-v3-compact
+  log_every: 20
+  save_every_epochs: 1
+

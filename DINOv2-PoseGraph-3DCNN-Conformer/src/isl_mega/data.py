@@ -163,6 +163,7 @@ class ManifestRecord:
     signer_id: str | None = None
     fingerspelling_text: str | None = None
     fingerspelling_spans: list | None = None
+    fingerspelling_label_known: bool = False
 
 
 class ISLVideoDataset(Dataset):
@@ -212,11 +213,17 @@ class ISLVideoDataset(Dataset):
                     s_t, e_t = float(span[0]), float(span[1])
                     if not (math.isfinite(s_t) and math.isfinite(e_t) and e_t >= s_t):
                         raise ValueError(f"{self.path}:{line_no} fingerspelling_spans intervals must be finite with start <= end")
+            fs_known_explicit = row.get("fingerspelling_label_known")
+            if fs_known_explicit is not None:
+                fs_known = bool(fs_known_explicit)
+            else:
+                fs_known = (fingerspelling_text is not None) or (fingerspelling_spans is not None)
             self.records.append(ManifestRecord(
                 uid=row["uid"], npz=row["npz"], translation=translation,
                 source_id=row["source_id"], signer_id=signer_id,
                 fingerspelling_text=fingerspelling_text,
                 fingerspelling_spans=fingerspelling_spans,
+                fingerspelling_label_known=fs_known,
             ))
         if not self.records:
             raise ValueError(f"Manifest contains no records: {self.path}")
@@ -366,6 +373,7 @@ class ISLVideoDataset(Dataset):
             "fingerspelling_text": rec.fingerspelling_text or "",
             "fingerspelling_spans": torch.from_numpy(fs_spans),
             "fingerspelling_span_known": fs_span_known,
+            "fingerspelling_label_known": rec.fingerspelling_label_known,
         }
 
 
@@ -415,21 +423,56 @@ def collate_examples(items: list[dict]) -> dict:
         "fingerspelling_texts": [x["fingerspelling_text"] for x in items],
         "fingerspelling_spans": fs_spans,
         "fingerspelling_span_known": fs_span_known,
+        "fingerspelling_label_known": torch.tensor(
+            [bool(x.get("fingerspelling_label_known", False)) for x in items], dtype=torch.bool
+        ),
     }
 
 
 def write_grouped_splits(records: list[dict], output_dir: str | Path,
                          ratios: tuple[float, float, float] = (0.8, 0.1, 0.1), seed: int = 2026,
                          group_key: str = "source_id") -> dict[str, list[dict]]:
-    """Deterministic group-disjoint split builder. Group-level counts are approximate."""
+    """Deterministic group-disjoint split builder. Group-level counts are approximate.
+
+    When group_key is 'joint_source_signer', connected components over shared source_id
+    and signer_id edges are partitioned together, preventing leakage of either key.
+    """
     if len(ratios) != 3 or any(x <= 0 for x in ratios) or not math.isclose(sum(ratios), 1.0, abs_tol=1e-6):
         raise ValueError("ratios must be three positive values summing to 1")
     groups: dict[str, list[dict]] = {}
-    for row in records:
-        group = row.get(group_key)
-        if not group:
-            raise ValueError(f"Every record needs nonempty {group_key}")
-        groups.setdefault(str(group), []).append(row)
+    if group_key == "joint_source_signer":
+        parent: dict[str, str] = {}
+        def find(u: str) -> str:
+            path = []
+            while parent.get(u, u) != u:
+                path.append(u)
+                u = parent[u]
+            for p in path:
+                parent[p] = u
+            return u
+        def union(u: str, v: str) -> None:
+            root_u, root_v = find(u), find(v)
+            if root_u != root_v:
+                parent[root_u] = root_v
+        for row in records:
+            src = row.get("source_id")
+            if not src:
+                raise ValueError("Every record needs nonempty source_id for joint_source_signer split")
+            src_node = f"src_{src}"
+            sig = row.get("signer_id")
+            if sig:
+                union(src_node, f"sig_{sig}")
+            else:
+                find(src_node)
+        for row in records:
+            cluster = find(f"src_{row['source_id']}")
+            groups.setdefault(cluster, []).append(row)
+    else:
+        for row in records:
+            group = row.get(group_key)
+            if not group:
+                raise ValueError(f"Every record needs nonempty {group_key}")
+            groups.setdefault(str(group), []).append(row)
     if len(groups) < 3:
         raise ValueError("At least three distinct groups are required for train/valid/test")
     rng = np.random.default_rng(seed)
@@ -449,7 +492,46 @@ def write_grouped_splits(records: list[dict], output_dir: str | Path,
     for split, rows in out.items():
         (output / f"{split}.jsonl").write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows),
                                                 encoding="utf-8")
-    validate_split_disjointness(out, group_key)
+    sizes = [len(rows) for rows in groups.values()]
+    total_samples = len(records)
+    largest_size = max(sizes)
+    largest_pct = (largest_size / max(total_samples, 1)) * 100.0
+    sorted_sizes = sorted(sizes)
+    median_size = float(np.median(sorted_sizes))
+    p90_size = float(np.percentile(sorted_sizes, 90))
+    diagnostics = {
+        "group_key": group_key,
+        "total_records": total_samples,
+        "total_components": len(groups),
+        "largest_component_size": largest_size,
+        "largest_component_pct": round(largest_pct, 2),
+        "median_component_size": median_size,
+        "p90_component_size": p90_size,
+        "splits": {
+            k: {
+                "count": len(v),
+                "pct": round((len(v) / max(total_samples, 1)) * 100.0, 2),
+                "unique_sources": len({r["source_id"] for r in v if r.get("source_id")}),
+                "unique_signers": len({r["signer_id"] for r in v if r.get("signer_id")}),
+            }
+            for k, v in out.items()
+        },
+    }
+    (output / "split_diagnostics.json").write_text(json.dumps(diagnostics, indent=2), encoding="utf-8")
+    if largest_pct > 50.0:
+        import warnings
+        warnings.warn(
+            f"Largest component contains {largest_pct:.1f}% of records; joint splitting may skew partition balance. "
+            "Consider reporting two separate evaluation protocols: (1) official source-disjoint and (2) strict signer-independent.",
+            RuntimeWarning,
+        )
+    if group_key == "joint_source_signer":
+        validate_split_disjointness(out, "source_id")
+        signer_present = any(any(r.get("signer_id") for r in split_rows) for split_rows in out.values())
+        if signer_present:
+            validate_split_disjointness(out, "signer_id")
+    else:
+        validate_split_disjointness(out, group_key)
     return out
 
 

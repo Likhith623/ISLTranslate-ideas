@@ -153,6 +153,25 @@ def test_pose_v2_torso_normalization_shared_hands_and_cross_graph():
     out_b = expert(xy_shifted_face, conf, valid, known, times, frame_mask)
     assert not torch.allclose(out_a["features"]["left_hand"], out_b["features"]["left_hand"])
 
+    # Invalid face/body nodes must not leak messages into valid hand nodes.
+    valid_face_masked = valid.clone()
+    valid_face_masked[:, :, 48:66] = False  # Face completely invalid.
+    out_masked_a = expert(xy, conf, valid_face_masked, known, times, frame_mask)
+    xy_shifted_invalid_face = xy.clone()
+    xy_shifted_invalid_face[:, :, 48:66] += 5.0  # Dramatic coordinate shift on invalid nodes.
+    out_masked_b = expert(xy_shifted_invalid_face, conf, valid_face_masked, known, times, frame_mask)
+    assert torch.allclose(out_masked_a["features"]["left_hand"], out_masked_b["features"]["left_hand"], atol=1e-5)
+
+    # First-step gradient verification: cross-articulator graph block parameters must receive nonzero gradients.
+    train_expert = PoseExpert(cfg).train()
+    out_train = train_expert(xy, conf, valid, known, times, frame_mask)
+    loss = out_train["features"]["left_hand"].sum()
+    loss.backward()
+    assert train_expert.cross_graph.gate.grad is not None and train_expert.cross_graph.gate.grad.abs().item() > 0.0
+    first_block = train_expert.cross_graph.blocks[0]
+    has_nonzero_grad = any(p.grad is not None and p.grad.abs().sum().item() > 0.0 for p in first_block.parameters())
+    assert has_nonzero_grad, "Cross-articulator block parameters must receive nonzero first-step gradients"
+
     missing = expert(xy, conf, torch.zeros_like(valid), known, times, frame_mask)
     assert all(torch.isfinite(v).all() for v in missing["features"].values())
     assert not any(v.any() for v in missing["available"].values())
@@ -443,5 +462,52 @@ def test_integrated_v2_decoder_duplicate_label_fallback_generate_and_train_epoch
     stats = train_mod.run_epoch(model2, [collate_batch], MockTokenizer(), cfg, torch.device("cpu"), optimizer=opt)
     assert stats["batches"] == 1
     assert np.isfinite(stats["loss"]) and np.isfinite(stats["cf_nll_gap"])
+
+
+def test_compact_v3_config_and_motion_disabled_forward_backward():
+    v3 = load_config(Path(__file__).parents[1] / "configs" / "research_v3_compact.yaml")
+    assert not v3.motion.enabled
+    assert not v3.vision.separate_hand_face_body
+    assert v3.vision.freeze_backbone
+    assert v3.decoder.model_name == "google/flan-t5-base"
+    assert v3.train.ot_weight == 0.0 and v3.train.fusion_entropy_weight == 0.0
+
+    # Verify that motion.enabled=False cleanly runs through ISLMEGA without instantiating MotionExpert
+    cfg = v2_smoke_config()
+    cfg.motion.enabled = False
+    model = ISLMEGA(cfg)
+    assert model.motion is None
+    batch = make_batch_inputs(batch=2, time=4)
+    enc = model.encode(**batch)
+    assert enc["memory"].shape == (2, 4, cfg.temporal.dim)
+    loss = enc["memory"].sum()
+    loss.backward()
+    assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in model.temporal.parameters() if p.requires_grad)
+
+
+def test_joint_source_signer_connected_component_splitting_and_diagnostics(tmp_path):
+    from isl_mega.data import write_grouped_splits, validate_split_disjointness
+    records = [
+        {"uid": "c1", "source_id": "v1", "signer_id": "s1"},
+        {"uid": "c2", "source_id": "v1", "signer_id": "s1"},
+        {"uid": "c3", "source_id": "v2", "signer_id": "s1"},  # Connects v1 and v2 via s1
+        {"uid": "c4", "source_id": "v3", "signer_id": "s2"},
+        {"uid": "c5", "source_id": "v3", "signer_id": "s2"},
+        {"uid": "c6", "source_id": "v4", "signer_id": "s3"},
+        {"uid": "c7", "source_id": "v5", "signer_id": "s4"},
+    ]
+    splits = write_grouped_splits(
+        records, tmp_path / "splits", ratios=(0.5, 0.25, 0.25), seed=42, group_key="joint_source_signer"
+    )
+    validate_split_disjointness(splits, "source_id")
+    validate_split_disjointness(splits, "signer_id")
+    diag_file = tmp_path / "splits" / "split_diagnostics.json"
+    assert diag_file.exists()
+    diag = json.loads(diag_file.read_text(encoding="utf-8"))
+    assert diag["group_key"] == "joint_source_signer"
+    assert diag["total_records"] == 7
+    assert diag["total_components"] >= 3
+
+
 
 

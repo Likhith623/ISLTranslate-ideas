@@ -198,14 +198,16 @@ class RegionGraphEncoder(nn.Module):
 class CrossArticulatorGraph(nn.Module):
     """Phonology-grounded relational graph across hand tips/wrists, body and face."""
 
-    def __init__(self, dim: int, heads: int, layers: int, dropout: float):
+    def __init__(self, dim: int, heads: int, layers: int, dropout: float, gate_init: float = 0.1):
         super().__init__()
         self.region_emb = nn.Embedding(4, dim)
         self.blocks = nn.ModuleList([
             EdgeGraphBlock(dim, heads, dropout, edge_feat_dim=4 + len(CROSS_RBF_SIGMAS))
             for _ in range(layers)
         ])
-        self.gate = nn.Parameter(torch.zeros(1))
+        # Initialize gate to a small nonzero value so cross-articulator relational
+        # messages are active at initialization and block parameters receive first-step gradients.
+        self.gate = nn.Parameter(torch.full((1,), float(gate_init), dtype=torch.float32))
         self.register_buffer("adj", cross_articulator_adjacency())
         self.register_buffer("rbf_sigmas", torch.tensor(CROSS_RBF_SIGMAS, dtype=torch.float32))
         self.register_buffer("hand_key_idx", torch.tensor(HAND_KEY_INDICES, dtype=torch.long), persistent=False)
@@ -286,7 +288,10 @@ class PoseExpert(nn.Module):
         self.body = RegionGraphEncoder(6, d, config.heads, config.layers, config.dropout, BODY_EDGES)
         self.face = RegionGraphEncoder(18, d, config.heads, config.layers, config.dropout, fully_connected=True)
         self.cross_graph = (
-            CrossArticulatorGraph(d, config.heads, config.cross_articulator_layers, config.dropout)
+            CrossArticulatorGraph(
+                d, config.heads, config.cross_articulator_layers, config.dropout,
+                gate_init=config.cross_articulator_gate_init,
+            )
             if config.cross_articulator_graph else None
         )
         self.output_dim = d

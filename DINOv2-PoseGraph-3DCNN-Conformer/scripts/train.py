@@ -61,6 +61,7 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
         "counterfactual": 0.0, "cf_nll_gap": 0.0,
     }
     count = 0
+    total_examples = 0
     for step, batch in enumerate(loader):
         if max_steps is not None and step >= max_steps:
             break
@@ -69,10 +70,13 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
                                   cfg.decoder.max_target_tokens)
         span_targets = batch.get("fingerspelling_spans")
         span_known = batch.get("fingerspelling_span_known")
+        label_known = batch.get("fingerspelling_label_known")
         if span_targets is not None:
             span_targets = span_targets.to(device, non_blocking=True)
         if span_known is not None:
             span_known = span_known.to(device, non_blocking=True)
+        if label_known is not None:
+            label_known = label_known.to(device, non_blocking=True)
         amp_enabled = device.type == "cuda" and cfg.train.amp_dtype != "none"
         amp_dtype = torch.bfloat16 if cfg.train.amp_dtype == "bf16" else torch.float16
         if training:
@@ -101,7 +105,8 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
             if spot_logits is not None and ctc_available is not None and cfg.train.fs_spot_weight > 0:
                 fs_spot = compute_fingerspelling_spotting_loss(
                     spot_logits, ctc_available, inputs["lengths"],
-                    batch["fingerspelling_texts"], span_targets=span_targets, span_known=span_known,
+                    batch["fingerspelling_texts"], span_targets=span_targets,
+                    span_known=span_known, label_known=label_known,
                 )
             else:
                 fs_spot = zero
@@ -147,19 +152,21 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
                 torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip_norm,
                                                error_if_nonfinite=True)
                 optimizer.step()
+        batch_examples = len(batch["uids"])
+        total_examples += batch_examples
         for k, val in (
             ("loss", loss), ("translation", translation), ("ctc", ctc), ("ot", ot),
             ("cross_modal", cross_modal), ("fs_spot", fs_spot), ("plan_div", plan_div),
             ("plan_ord", plan_ord), ("fusion_ent", fusion_ent),
             ("counterfactual", counterfactual), ("cf_nll_gap", cf_nll_gap),
         ):
-            sums[k] += float(val.detach())
+            sums[k] += float(val.detach()) * batch_examples
         count += 1
         if training and (step + 1) % cfg.train.log_every == 0:
             print(f"epoch={epoch + 1} step={step + 1} loss={float(loss.detach()):.5f}")
-    if count == 0:
-        raise RuntimeError("Epoch completed without processing a batch")
-    return {**{k: v / count for k, v in sums.items()}, "batches": count}
+    if total_examples == 0:
+        raise RuntimeError("Epoch completed without processing any examples")
+    return {**{k: v / total_examples for k, v in sums.items()}, "batches": count, "examples": total_examples}
 
 
 def build_epoch_scheduler(optimizer, epochs: int, warmup_ratio: float):

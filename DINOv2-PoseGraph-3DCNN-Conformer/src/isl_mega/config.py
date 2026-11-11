@@ -62,6 +62,7 @@ class PoseConfig:
     share_hand_encoder: bool = False
     cross_articulator_graph: bool = False
     cross_articulator_layers: int = 1
+    cross_articulator_gate_init: float = 0.1
 
     def validate(self) -> None:
         if self.num_landmarks != 66:
@@ -77,15 +78,20 @@ class PoseConfig:
             raise ValueError("max_interpolation_gap_seconds cannot be negative")
         if not _finite_in_bounds(self.min_confidence, 0.0, 1.0):
             raise ValueError("pose.min_confidence must be in [0,1]")
+        if not _finite_in_bounds(self.cross_articulator_gate_init, -5.0, 5.0):
+            raise ValueError("pose.cross_articulator_gate_init must be finite in [-5, 5]")
 
 
 @dataclass
 class MotionConfig:
+    enabled: bool = True
     hidden_dim: int = 256
     temporal_kernel: int = 5
     dropout: float = 0.1
 
     def validate(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise ValueError("motion.enabled must be a boolean")
         if self.hidden_dim < 2 or self.hidden_dim % 2 or self.temporal_kernel < 1 or self.temporal_kernel % 2 == 0:
             raise ValueError("motion.hidden_dim must be positive/even and temporal_kernel must be positive/odd")
         _dropout(self.dropout, "motion.dropout")
