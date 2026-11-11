@@ -1,0 +1,7 @@
+archive
+archive/*
+.venv/*
+.venv
+.DS_Store
+preprocessing/dataset.zip
+.env
