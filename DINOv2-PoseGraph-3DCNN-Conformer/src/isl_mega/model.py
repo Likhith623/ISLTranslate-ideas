@@ -36,6 +36,7 @@ class ISLMEGA(nn.Module):
         self.fingerspelling = FingerspellingExpert(
             config.vision.dim, config.pose.hidden_dim, config.fingerspelling.hidden_dim,
             config.fingerspelling.layers, config.fingerspelling.dropout,
+            span_routing=config.fingerspelling.span_routing,
         ) if config.fingerspelling.enabled else None
         d_vis, d_pose, d_motion = config.vision.dim, config.pose.hidden_dim, config.motion.hidden_dim
         d_fs = config.fingerspelling.hidden_dim if config.fingerspelling.enabled else d_vis
@@ -46,9 +47,18 @@ class ISLMEGA(nn.Module):
         }
         self.fusion = ReliabilityAwareFusion(dims, config.fusion)
         self.temporal = HierarchicalTemporalEncoder(config.temporal)
-        self.planner = LatentPlanGrounder(config.temporal.dim, config.temporal.planner_queries,
-                                         config.temporal.planner_layers, config.temporal.heads,
-                                         config.temporal.dropout)
+        self.planner = LatentPlanGrounder(
+            config.temporal.dim,
+            config.temporal.planner_queries,
+            config.temporal.planner_layers,
+            config.temporal.heads,
+            config.temporal.dropout,
+            diverse_ordered=config.temporal.diverse_ordered_planning,
+            dynamic_routing=config.temporal.dynamic_plan_routing,
+            min_queries=config.temporal.min_plan_queries,
+            order_margin=config.temporal.plan_order_margin,
+            target_stride=config.temporal.coarse_stride * 2,
+        )
         self.decoder = decoder
         self.output_dim = config.temporal.dim
 
@@ -108,8 +118,9 @@ class ISLMEGA(nn.Module):
             left_ok = effective_box_valid[:, :, 1] | pose["available"]["left_hand"]
             right_ok = effective_box_valid[:, :, 2] | pose["available"]["right_hand"]
             fs_avail = fs["available"] & frame_mask
+            fs_conf_signal = fs["spot_prob"] if self.config.fingerspelling.span_routing else fs["gate"]
             quality["fingerspelling"] = torch.stack([
-                fs_avail.float(), (left_ok | right_ok).float(), fs["gate"],
+                fs_avail.float(), (left_ok | right_ok).float(), fs_conf_signal,
                 fs["logits"].float().softmax(-1).amax(-1), frame_mask.float()
             ], -1)
         else:
@@ -125,11 +136,16 @@ class ISLMEGA(nn.Module):
             "motion": motion_avail,
             "fingerspelling": fs["available"] if fs is not None else torch.zeros_like(frame_mask),
         }
-        fused, modality_weights, interacted, modality_embeddings = self.fusion(streams, available, quality)
+        fused, modality_weights, interacted, modality_embeddings, fusion_aux = self.fusion.forward_with_aux(
+            streams, available, quality, timestamps=timestamps
+        )
         temporal, memory_mask, temporal_aux = self.temporal(fused, lengths, timestamps)
-        plan, grounding = self.planner(temporal, memory_mask)
+        plan, grounding, plan_aux = self.planner.forward_with_aux(temporal, memory_mask, timestamps=timestamps)
         result = {
             "memory": temporal, "memory_mask": memory_mask, "plan_tokens": plan,
+            "plan_mask": plan_aux["plan_mask"],
+            "plan_diversity_loss": plan_aux["diversity_loss"],
+            "plan_order_loss": plan_aux["order_loss"],
             "grounding_attention": grounding, "modality_weights": modality_weights,
             "modality_interactions": interacted,
             "modality_embeddings": modality_embeddings,
@@ -137,21 +153,38 @@ class ISLMEGA(nn.Module):
             "ctc_logits": fs["logits"] if fs is not None else None,
             "ctc_available": fs["available"] if fs is not None else None,
             "fingerspelling_gate": fs["gate"] if fs is not None else None,
+            "spot_logits": fs["spot_logits"] if fs is not None else None,
+            "spot_prob": fs["spot_prob"] if fs is not None else None,
+            "fusion_aux": fusion_aux,
             "temporal_aux": temporal_aux,
         }
         return result
 
     def forward(self, *, labels: torch.Tensor | None = None, semantic_ot: bool = False,
-                **inputs) -> dict:
+                counterfactual_grounding: bool = False, **inputs) -> dict:
         encoded = self.encode(**inputs)
         if labels is not None:
             if self.decoder is None:
                 raise RuntimeError("No T5 decoder is attached. Build with build_model(..., with_decoder=True).")
-            decoded = self.decoder(encoded["memory"], encoded["memory_mask"],
-                                   encoded["plan_tokens"], labels, semantic_ot=semantic_ot,
-                                   ot_epsilon=self.config.decoder.ot_epsilon,
-                                   ot_iterations=self.config.decoder.ot_iterations,
-                                   label_smoothing=self.config.train.label_smoothing)
+            decoded = self.decoder(
+                encoded["memory"],
+                encoded["memory_mask"],
+                encoded["plan_tokens"],
+                labels,
+                semantic_ot=semantic_ot,
+                ot_epsilon=self.config.decoder.ot_epsilon,
+                ot_iterations=self.config.decoder.ot_iterations,
+                label_smoothing=self.config.train.label_smoothing,
+                plan_mask=encoded["plan_mask"],
+                plan_semantic_ot=self.config.decoder.plan_semantic_ot,
+                plan_ot_alpha=self.config.decoder.plan_ot_alpha,
+                counterfactual_grounding=counterfactual_grounding or (
+                    self.config.decoder.use_counterfactual_grounding and self.config.train.counterfactual_weight > 0
+                ),
+                counterfactual_margin=self.config.decoder.counterfactual_margin,
+                counterfactual_kl_margin=self.config.decoder.counterfactual_kl_margin,
+                counterfactual_mode=self.config.decoder.counterfactual_mode,
+            )
             encoded.update({f"decoder_{k}": v for k, v in decoded.items()})
         return encoded
 
@@ -161,10 +194,13 @@ class ISLMEGA(nn.Module):
         if self.decoder is None:
             raise RuntimeError("No T5 decoder is attached")
         encoded = self.encode(**inputs)
-        return self.decoder.generate(encoded["memory"], encoded["memory_mask"], encoded["plan_tokens"],
-                                     num_beams=num_beams,
-                                     max_new_tokens=max_new_tokens or self.config.decoder.max_target_tokens,
-                                     length_penalty=length_penalty)
+        return self.decoder.generate(
+            encoded["memory"], encoded["memory_mask"], encoded["plan_tokens"],
+            num_beams=num_beams,
+            max_new_tokens=max_new_tokens or self.config.decoder.max_target_tokens,
+            length_penalty=length_penalty,
+            plan_mask=encoded["plan_mask"],
+        )
 
 
 def build_model(config: ISLMEGAConfig, with_decoder: bool = False) -> ISLMEGA:

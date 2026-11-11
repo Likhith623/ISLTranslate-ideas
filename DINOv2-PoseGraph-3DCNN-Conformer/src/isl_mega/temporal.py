@@ -152,11 +152,53 @@ class FineDetailRetrieval(nn.Module):
         return self.norm(coarse + self.out(context))
 
 
-class HierarchicalTemporalEncoder(nn.Module):
-    """Fine-rate local path + half-rate global path + local detail retrieval.
+class AdaptiveDetailRetrieval(nn.Module):
+    """Cross-attention from adaptive event slots to fine frames using soft event support."""
 
-    No input frame is discarded: the fine branch remains length T. The global
-    branch has ceil(T/stride) tokens and is broadcast back to the fine timeline.
+    def __init__(self, dim: int, heads: int):
+        super().__init__()
+        if dim % heads:
+            raise ValueError("dim must divide heads")
+        self.heads, self.dh = heads, dim // heads
+        self.q = nn.Linear(dim, dim)
+        self.k = nn.Linear(dim, dim)
+        self.v = nn.Linear(dim, dim)
+        self.out = nn.Linear(dim, dim)
+        self.norm = nn.LayerNorm(dim)
+        self.log_prior_scale = nn.Parameter(torch.zeros(heads))
+
+    def forward(
+        self,
+        coarse: torch.Tensor,
+        fine: torch.Tensor,
+        assign_logits: torch.Tensor,
+        coarse_mask: torch.Tensor,
+        fine_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        b, m, d = coarse.shape
+        t = fine.shape[1]
+        q = self.q(coarse).view(b, m, self.heads, self.dh).transpose(1, 2)
+        k = self.k(fine).view(b, t, self.heads, self.dh).transpose(1, 2)
+        v = self.v(fine).view(b, t, self.heads, self.dh).transpose(1, 2)
+        score = (q @ k.transpose(-2, -1)) / math.sqrt(self.dh)
+        prior_scale = F.softplus(self.log_prior_scale).view(1, self.heads, 1, 1)
+        score = score + prior_scale * assign_logits[:, None, :, :]
+        allowed = coarse_mask[:, None, :, None] & fine_mask[:, None, None, :]
+        any_valid = allowed.any(-1, keepdim=True)
+        score = score.masked_fill(~allowed, torch.finfo(score.dtype).min)
+        score = torch.where(any_valid, score, torch.zeros_like(score))
+        weight = torch.softmax(score, dim=-1)
+        weight = torch.where(any_valid, weight, torch.zeros_like(weight))
+        ctx = (weight @ v).transpose(1, 2).reshape(b, m, d)
+        out = self.norm(coarse + self.out(ctx))
+        return torch.where(coarse_mask[..., None], out, torch.zeros_like(out))
+
+
+class HierarchicalTemporalEncoder(nn.Module):
+    """Fine-rate local path + global Conformer path + local/event detail retrieval.
+
+    Supports both fixed uniform grouping (v1 baseline) and differentiable
+    kinematic boundary-aware soft event consolidation (v2).
     """
 
     def __init__(self, config: TemporalConfig):
@@ -174,7 +216,75 @@ class HierarchicalTemporalEncoder(nn.Module):
         self.time_bias = RelativeTimeBias(config.heads, config.relative_time_buckets,
                                           config.max_elapsed_seconds)
         self.detail = FineDetailRetrieval(config.dim, config.heads, config.detail_window, config.coarse_stride)
+        if config.adaptive_consolidation:
+            self.salience_net = nn.Sequential(
+                nn.Linear(config.dim * 2 + 2, max(config.dim // 2, 32)),
+                nn.GELU(),
+                nn.Linear(max(config.dim // 2, 32), 1),
+            )
+            self.log_slot_sigma = nn.Parameter(torch.tensor(-0.6))
+            self.slot_spread_proj = nn.Linear(1, config.dim)
+            self.adaptive_detail = AdaptiveDetailRetrieval(config.dim, config.heads)
+        else:
+            self.salience_net = None
+            self.log_slot_sigma = None
+            self.slot_spread_proj = None
+            self.adaptive_detail = None
         self.final = nn.Sequential(nn.Linear(config.dim * 2, config.dim), nn.LayerNorm(config.dim), nn.GELU())
+
+    def _adaptive_pool(
+        self,
+        fine: torch.Tensor,
+        fine_mask: torch.Tensor,
+        lengths: torch.Tensor,
+        timestamps: torch.Tensor,
+    ):
+        b, t, d = fine.shape
+        stride = self.config.coarse_stride
+        m = (t + stride - 1) // stride
+        m_valid = torch.div(lengths + stride - 1, stride, rounding_mode="floor")
+        coarse_mask = make_length_mask(m_valid, m)
+
+        delta = torch.zeros_like(fine)
+        step_dt = fine.new_full((b, t), 0.04)
+        if t > 1:
+            valid_pairs = fine_mask[:, 1:] & fine_mask[:, :-1]
+            delta[:, 1:] = torch.where(valid_pairs[..., None], fine[:, 1:] - fine[:, :-1],
+                                       torch.zeros_like(fine[:, 1:]))
+            raw_dt = (timestamps[:, 1:] - timestamps[:, :-1]).clamp_min(1e-4)
+            step_dt[:, 1:] = torch.where(valid_pairs, raw_dt, step_dt[:, 1:])
+
+        delta_norm = torch.linalg.vector_norm(delta, dim=-1, keepdim=True) / math.sqrt(d)
+        salience_in = torch.cat([fine, delta, delta_norm, torch.log1p(step_dt).unsqueeze(-1)], dim=-1)
+        salience = (F.softplus(self.salience_net(salience_in).squeeze(-1)) + 0.1)
+        salience = torch.where(fine_mask, salience, torch.zeros_like(salience))
+
+        total_s = salience.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+        cum = torch.cumsum(salience, dim=-1) - 0.5 * salience
+        slot_pos = (cum / total_s) * m_valid[:, None].to(fine.dtype)
+        centres = torch.arange(m, device=fine.device, dtype=fine.dtype) + 0.5
+        sigma = F.softplus(self.log_slot_sigma) + 0.30
+        assign_logits = -0.5 * ((slot_pos[:, None, :] - centres[None, :, None]) / sigma).square()
+
+        allowed_mt = coarse_mask[:, :, None] & fine_mask[:, None, :]
+        any_frame = allowed_mt.any(-1, keepdim=True)
+        masked_logits = assign_logits.masked_fill(~allowed_mt, torch.finfo(fine.dtype).min)
+        masked_logits = torch.where(any_frame, masked_logits, torch.zeros_like(masked_logits))
+        assign = torch.softmax(masked_logits, dim=-1)
+        assign = torch.where(allowed_mt & any_frame, assign, torch.zeros_like(assign))
+
+        grouped_mean = torch.bmm(assign, fine)
+        grouped_delta = torch.bmm(assign, torch.where(fine_mask[..., None], delta, torch.zeros_like(delta)))
+        coarse = self.coarse_projection(torch.cat([grouped_mean, grouped_delta], dim=-1))
+        coarse_times = (assign * timestamps[:, None, :]).sum(dim=-1)
+        slot_std = (assign * (timestamps[:, None, :] - coarse_times[:, :, None]).square()).sum(dim=-1).clamp_min(0.0).sqrt()
+
+        elapsed = coarse_times - timestamps[:, :1]
+        scale = torch.stack([elapsed, torch.log1p(elapsed.clamp_min(0))], dim=-1)
+        coarse = coarse + self.time_projection(scale.to(coarse.dtype))
+        coarse = coarse + self.slot_spread_proj(slot_std[..., None].to(coarse.dtype))
+        coarse = torch.where(coarse_mask[..., None], coarse, torch.zeros_like(coarse))
+        return coarse, coarse_times, coarse_mask, assign, assign_logits, salience
 
     def forward(self, x: torch.Tensor, lengths: torch.Tensor, timestamps: torch.Tensor):
         if x.ndim != 3 or lengths.shape != (x.shape[0],) or timestamps.shape != x.shape[:2]:
@@ -191,46 +301,71 @@ class HierarchicalTemporalEncoder(nn.Module):
             raise ValueError("valid timestamps must be strictly increasing")
         fine = self.stem(x, fine_mask)
         stride = self.config.coarse_stride
-        pad = (stride - (t % stride)) % stride
-        if pad:
-            fine_pad = F.pad(fine, (0, 0, 0, pad))
-            time_pad = F.pad(timestamps, (0, pad), value=0.0)
+
+        if self.config.adaptive_consolidation:
+            coarse, coarse_times, coarse_mask, assign, assign_logits, salience = self._adaptive_pool(
+                fine, fine_mask, lengths, timestamps
+            )
+            bias = self.time_bias(coarse_times)
+            for block in self.global_blocks:
+                coarse = block(coarse, coarse_mask, bias)
+            retrieved = self.adaptive_detail(coarse, fine, assign_logits, coarse_mask, fine_mask)
+            rev_weights = assign / assign.sum(dim=1, keepdim=True).clamp_min(1e-6)
+            rev_weights = torch.where(coarse_mask[:, :, None] & fine_mask[:, None, :],
+                                      rev_weights, torch.zeros_like(rev_weights))
+            global_up = torch.bmm(rev_weights.transpose(1, 2), retrieved)
+            aux = {
+                "fine": fine,
+                "global": coarse,
+                "global_times": coarse_times,
+                "global_mask": coarse_mask,
+                "retrieved_global": retrieved,
+                "event_salience": salience,
+                "event_assignment": assign,
+            }
         else:
-            fine_pad, time_pad = fine, timestamps
-        tp = fine_pad.shape[1]
-        grouped = fine_pad.reshape(b, tp // stride, stride, d)
-        # Pair mean and first-to-last difference provide a learned summary while
-        # the fine-rate tensor remains available to the detail path.
-        group_valid = (torch.arange(tp, device=x.device)[None, :] < lengths[:, None]).reshape(b, -1, stride)
-        group_count = group_valid.sum(dim=-1).clamp_min(1)
-        grouped_mean = (grouped * group_valid[..., None]).sum(dim=2) / group_count[..., None]
-        # Difference uses the final *valid* item in each group. This matters
-        # for a partial final group and for batches with differently sized clips.
-        has_multiple = group_valid.sum(dim=-1) > 1
-        last_index = (group_valid.sum(dim=-1) - 1).clamp_min(0)
-        last_valid = torch.gather(
-            grouped, dim=2,
-            index=last_index[..., None, None].expand(-1, -1, 1, d),
-        ).squeeze(2)
-        first_valid = grouped[:, :, 0]
-        grouped_diff = torch.where(has_multiple[..., None], last_valid - first_valid,
-                                   torch.zeros_like(first_valid))
-        coarse = self.coarse_projection(torch.cat([grouped_mean, grouped_diff], dim=-1))
-        times_g = time_pad.reshape(b, -1, stride)
-        # group_valid is reused from the masked temporal aggregation above.
-        coarse_times = (times_g * group_valid).sum(dim=-1) / group_count
-        coarse_lengths = torch.div(lengths + stride - 1, stride, rounding_mode="floor")
-        coarse_mask = make_length_mask(coarse_lengths, coarse.shape[1])
-        elapsed = coarse_times - timestamps[:, :1]
-        scale = torch.stack([elapsed, torch.log1p(elapsed.clamp_min(0))], dim=-1)
-        coarse = coarse + self.time_projection(scale.to(coarse.dtype))
-        coarse = torch.where(coarse_mask[..., None], coarse, torch.zeros_like(coarse))
-        bias = self.time_bias(coarse_times)
-        for block in self.global_blocks:
-            coarse = block(coarse, coarse_mask, bias)
-        retrieved = self.detail(coarse, fine, lengths)
-        global_up = retrieved.repeat_interleave(stride, dim=1)[:, :t]
+            pad = (stride - (t % stride)) % stride
+            if pad:
+                fine_pad = F.pad(fine, (0, 0, 0, pad))
+                time_pad = F.pad(timestamps, (0, pad), value=0.0)
+            else:
+                fine_pad, time_pad = fine, timestamps
+            tp = fine_pad.shape[1]
+            grouped = fine_pad.reshape(b, tp // stride, stride, d)
+            group_valid = (torch.arange(tp, device=x.device)[None, :] < lengths[:, None]).reshape(b, -1, stride)
+            group_count = group_valid.sum(dim=-1).clamp_min(1)
+            grouped_mean = (grouped * group_valid[..., None]).sum(dim=2) / group_count[..., None]
+            has_multiple = group_valid.sum(dim=-1) > 1
+            last_index = (group_valid.sum(dim=-1) - 1).clamp_min(0)
+            last_valid = torch.gather(
+                grouped, dim=2,
+                index=last_index[..., None, None].expand(-1, -1, 1, d),
+            ).squeeze(2)
+            first_valid = grouped[:, :, 0]
+            grouped_diff = torch.where(has_multiple[..., None], last_valid - first_valid,
+                                       torch.zeros_like(first_valid))
+            coarse = self.coarse_projection(torch.cat([grouped_mean, grouped_diff], dim=-1))
+            times_g = time_pad.reshape(b, -1, stride)
+            coarse_times = (times_g * group_valid).sum(dim=-1) / group_count
+            coarse_lengths = torch.div(lengths + stride - 1, stride, rounding_mode="floor")
+            coarse_mask = make_length_mask(coarse_lengths, coarse.shape[1])
+            elapsed = coarse_times - timestamps[:, :1]
+            scale = torch.stack([elapsed, torch.log1p(elapsed.clamp_min(0))], dim=-1)
+            coarse = coarse + self.time_projection(scale.to(coarse.dtype))
+            coarse = torch.where(coarse_mask[..., None], coarse, torch.zeros_like(coarse))
+            bias = self.time_bias(coarse_times)
+            for block in self.global_blocks:
+                coarse = block(coarse, coarse_mask, bias)
+            retrieved = self.detail(coarse, fine, lengths)
+            global_up = retrieved.repeat_interleave(stride, dim=1)[:, :t]
+            aux = {
+                "fine": fine,
+                "global": coarse,
+                "global_times": coarse_times,
+                "global_mask": coarse_mask,
+                "retrieved_global": retrieved,
+            }
+
         out = self.final(torch.cat([fine, global_up], dim=-1))
         out = torch.where(fine_mask[..., None], out, torch.zeros_like(out))
-        return out, fine_mask, {"fine": fine, "global": coarse, "global_times": coarse_times,
-                                "global_mask": coarse_mask, "retrieved_global": retrieved}
+        return out, fine_mask, aux

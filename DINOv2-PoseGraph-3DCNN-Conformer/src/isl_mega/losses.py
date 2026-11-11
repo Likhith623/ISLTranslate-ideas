@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import torch
+import torch.nn.functional as F
 from .fingerspelling import encode_characters, ctc_loss
 
 
@@ -17,8 +19,14 @@ def prepare_ctc_targets(texts: list[str], device: torch.device, max_input_length
     return indices, targets, target_lengths
 
 
-def compute_ctc_batch(logits: torch.Tensor, input_lengths: torch.Tensor, texts: list[str],
-                      availability: torch.Tensor | None = None) -> torch.Tensor:
+def compute_ctc_batch(
+    logits: torch.Tensor,
+    input_lengths: torch.Tensor,
+    texts: list[str],
+    availability: torch.Tensor | None = None,
+    span_targets: torch.Tensor | None = None,
+    span_known: torch.Tensor | None = None,
+) -> torch.Tensor:
     sequences = [encode_characters(x) for x in texts]
     selected_logits, selected_targets, selected_lengths = [], [], []
     for i, seq in enumerate(sequences):
@@ -27,9 +35,13 @@ def compute_ctc_batch(logits: torch.Tensor, input_lengths: torch.Tensor, texts: 
         length = int(input_lengths[i])
         valid = (availability[i, :length].bool() if availability is not None
                  else torch.ones(length, dtype=torch.bool, device=logits.device))
-        row = logits[i, :length][valid]
         repeated = sum(a == b for a, b in zip(seq, seq[1:]))
         minimum_steps = len(seq) + repeated
+        if span_targets is not None and span_known is not None and bool(span_known[i]):
+            spanned = valid & span_targets[i, :length].bool()
+            if int(spanned.sum()) >= minimum_steps:
+                valid = spanned
+        row = logits[i, :length][valid]
         if len(row) < minimum_steps:
             continue
         selected_logits.append(row)
@@ -46,6 +58,63 @@ def compute_ctc_batch(logits: torch.Tensor, input_lengths: torch.Tensor, texts: 
     target_lengths = torch.tensor(selected_lengths, device=logits.device, dtype=torch.long)
     targets = torch.tensor(selected_targets, device=logits.device, dtype=torch.long)
     return ctc_loss(padded, torch.tensor(in_lengths, device=logits.device), targets, target_lengths)
+
+
+def compute_fingerspelling_spotting_loss(
+    spot_logits: torch.Tensor | None,
+    availability: torch.Tensor | None,
+    input_lengths: torch.Tensor,
+    texts: list[str],
+    span_targets: torch.Tensor | None = None,
+    span_known: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Supervise frame-level fingerspelling activity logits via spans or clip-level MIL."""
+    if spot_logits is None or availability is None:
+        return torch.tensor(0.0, device=input_lengths.device)
+    losses = []
+    for i, text in enumerate(texts):
+        length = int(input_lengths[i])
+        valid = availability[i, :length].bool()
+        if not valid.any():
+            continue
+        logits_i = spot_logits[i, :length][valid].float()
+        if span_targets is not None and span_known is not None and bool(span_known[i]):
+            tgt = span_targets[i, :length][valid].float()
+            losses.append(F.binary_cross_entropy_with_logits(logits_i, tgt))
+        elif text.strip():
+            # Weak clip-level positive bag: peak frame should activate, while
+            # sparsity regularizes toward localized fingerspelling density.
+            peak_loss = F.binary_cross_entropy_with_logits(logits_i.amax().unsqueeze(0), logits_i.new_ones((1,)))
+            mean_prob = torch.sigmoid(logits_i).mean()
+            target_frac = min(0.65, max(0.10, float(len(text.strip())) / max(float(len(logits_i)), 1.0)))
+            losses.append(peak_loss + 0.5 * (mean_prob - target_frac).square())
+        else:
+            # Explicit non-fingerspelling clip suppresses false character spotting.
+            losses.append(0.25 * F.binary_cross_entropy_with_logits(logits_i, torch.zeros_like(logits_i)))
+    return torch.stack(losses).mean() if losses else spot_logits.sum() * 0.0
+
+
+def compute_fusion_entropy_loss(
+    weights: torch.Tensor,
+    stream_available: torch.Tensor,
+    frame_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Normalized stream-entropy regularizer preventing single-modality collapse."""
+    if weights.ndim != 3 or stream_available.shape != weights.shape:
+        raise ValueError("weights and stream_available must have matching [B,T,S] shapes")
+    avail = stream_available.bool()
+    if frame_mask is not None:
+        avail = avail & frame_mask.bool()[..., None]
+    count = avail.sum(dim=-1)
+    multi = count >= 2
+    if not multi.any():
+        return weights.sum() * 0.0
+    w = weights.float().clamp_min(1e-8)
+    entropy = -(torch.where(avail, w * w.log(), torch.zeros_like(w))).sum(dim=-1)
+    max_ent = torch.log(count.float().clamp_min(2.0))
+    norm_ent = entropy / max_ent
+    # Normalized loss in [0, 1]; 0 when uniformly balancing available streams.
+    return (1.0 - norm_ent[multi]).clamp(0.0, 1.0).mean()
 
 
 def compute_cross_modal_alignment_loss(

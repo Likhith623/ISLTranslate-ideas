@@ -162,6 +162,7 @@ class ManifestRecord:
     source_id: str
     signer_id: str | None = None
     fingerspelling_text: str | None = None
+    fingerspelling_spans: list | None = None
 
 
 class ISLVideoDataset(Dataset):
@@ -201,10 +202,14 @@ class ISLVideoDataset(Dataset):
             fingerspelling_text = row.get("fingerspelling_text")
             if fingerspelling_text is not None and not isinstance(fingerspelling_text, str):
                 raise ValueError(f"{self.path}:{line_no} field 'fingerspelling_text' must be a string")
+            fingerspelling_spans = row.get("fingerspelling_spans")
+            if fingerspelling_spans is not None and not isinstance(fingerspelling_spans, list):
+                raise ValueError(f"{self.path}:{line_no} field 'fingerspelling_spans' must be a list of [start,end] pairs")
             self.records.append(ManifestRecord(
                 uid=row["uid"], npz=row["npz"], translation=translation,
                 source_id=row["source_id"], signer_id=signer_id,
                 fingerspelling_text=fingerspelling_text,
+                fingerspelling_spans=fingerspelling_spans,
             ))
         if not self.records:
             raise ValueError(f"Manifest contains no records: {self.path}")
@@ -243,6 +248,7 @@ class ISLVideoDataset(Dataset):
             boxes_raw = np.asarray(z["boxes"], dtype=np.float32) if "boxes" in z else None
             box_valid_raw = np.asarray(z["box_valid"], dtype=bool) if "box_valid" in z else None
             box_scores_raw = np.asarray(z["box_scores"], dtype=np.float32) if "box_scores" in z else None
+            npz_fs_spans = np.asarray(z["fingerspelling_spans"], dtype=bool) if "fingerspelling_spans" in z else None
         if frames.ndim != 4:
             raise ValueError(f"frames must be [T,H,W,3] or [T,3,H,W], got {frames.shape}")
         if frames.shape[-1] == 3:
@@ -319,10 +325,27 @@ class ISLVideoDataset(Dataset):
             raise ValueError("Pose coordinates contain NaN or infinite values after letterboxing")
         t = len(video_times)
         known = np.full((t, 66), confidence_known, dtype=bool)
+        rel_times = (video_times - video_times[0]).astype(np.float32)
+        if npz_fs_spans is not None:
+            if npz_fs_spans.shape != (t,):
+                raise ValueError("fingerspelling_spans NPZ array must have shape [Tv]")
+            fs_spans = npz_fs_spans
+            fs_span_known = True
+        elif rec.fingerspelling_spans is not None:
+            fs_spans = np.zeros(t, dtype=bool)
+            for item in rec.fingerspelling_spans:
+                if not isinstance(item, (list, tuple)) or len(item) != 2:
+                    raise ValueError("Each fingerspelling_spans entry must be a [start_sec, end_sec] pair")
+                s_t, e_t = float(item[0]), float(item[1])
+                fs_spans |= (rel_times >= s_t) & (rel_times <= e_t)
+            fs_span_known = True
+        else:
+            fs_spans = np.zeros(t, dtype=bool)
+            fs_span_known = False
         return {
             "uid": rec.uid, "source_id": rec.source_id, "signer_id": rec.signer_id,
             "frames": frame_tensor,
-            "timestamps": torch.from_numpy((video_times - video_times[0]).astype(np.float32)),
+            "timestamps": torch.from_numpy(rel_times),
             "pose_xy": torch.from_numpy(pose_xy),
             "pose_confidence": torch.from_numpy(pose_conf),
             "pose_valid": torch.from_numpy(pose_valid),
@@ -332,6 +355,8 @@ class ISLVideoDataset(Dataset):
             "box_scores": torch.from_numpy(box_scores),
             "translation": rec.translation,
             "fingerspelling_text": rec.fingerspelling_text or "",
+            "fingerspelling_spans": torch.from_numpy(fs_spans),
+            "fingerspelling_span_known": fs_span_known,
         }
 
 
@@ -357,6 +382,13 @@ def collate_examples(items: list[dict]) -> dict:
     boxes = pad("boxes", (4, 4), torch.float32)
     box_valid = pad("box_valid", (4,), torch.bool)
     box_scores = pad("box_scores", (4,), torch.float32)
+    if "fingerspelling_spans" in items[0]:
+        fs_spans = pad("fingerspelling_spans", (), torch.bool)
+        fs_span_known = torch.tensor([bool(x.get("fingerspelling_span_known", False)) for x in items],
+                                     dtype=torch.bool)
+    else:
+        fs_spans = torch.zeros((b, max_t), dtype=torch.bool)
+        fs_span_known = torch.zeros(b, dtype=torch.bool)
     frame_mask = torch.arange(max_t)[None] < lengths[:, None]
     return {
         "uids": [x["uid"] for x in items], "source_ids": [x["source_id"] for x in items],
@@ -367,6 +399,8 @@ def collate_examples(items: list[dict]) -> dict:
         "lengths": lengths, "frame_mask": frame_mask,
         "translations": [x["translation"] for x in items],
         "fingerspelling_texts": [x["fingerspelling_text"] for x in items],
+        "fingerspelling_spans": fs_spans,
+        "fingerspelling_span_known": fs_span_known,
     }
 
 

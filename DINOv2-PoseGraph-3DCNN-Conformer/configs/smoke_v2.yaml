@@ -1,0 +1,110 @@
+vision:
+  backend: native
+  pretrained: false
+  image_size: 64
+  crop_size: 32
+  patch_size: 8
+  dim: 32
+  depth: 1
+  heads: 4
+  mlp_ratio: 2.0
+  dropout: 0.0
+  separate_hand_face_body: true
+pose:
+  num_landmarks: 66
+  node_dim: 11
+  hidden_dim: 32
+  layers: 1
+  heads: 4
+  dropout: 0.0
+  normalize_by_shoulder_span: true
+  share_hand_encoder: true
+  cross_articulator_graph: true
+  cross_articulator_layers: 1
+motion:
+  hidden_dim: 32
+  temporal_kernel: 3
+  dropout: 0.0
+fusion:
+  dim: 64
+  num_heads: 4
+  layers: 1
+  quality_dim: 5
+  dropout: 0.0
+  continuous_time_lag: true
+  lag_window_seconds: 0.20
+  lag_radius_frames: 4
+  reliability_uncertainty_gate: true
+fingerspelling:
+  enabled: true
+  hidden_dim: 32
+  layers: 1
+  dropout: 0.0
+  span_routing: true
+temporal:
+  dim: 64
+  local_kernels: [3, 5]
+  local_dilations: [1, 2]
+  global_layers: 2
+  heads: 4
+  ffn_dim: 128
+  dropout: 0.0
+  relative_time_buckets: 16
+  max_elapsed_seconds: 10.0
+  coarse_stride: 2
+  detail_window: 3
+  planner_queries: 6
+  planner_layers: 1
+  adaptive_consolidation: true
+  diverse_ordered_planning: true
+  dynamic_plan_routing: true
+  min_plan_queries: 2
+  plan_order_margin: 0.0
+decoder:
+  model_name: google/flan-t5-small
+  local_files_only: true
+  max_target_tokens: 64
+  freeze_decoder: false
+  use_semantic_ot: true
+  ot_epsilon: 0.08
+  ot_iterations: 8
+  plan_semantic_ot: true
+  plan_ot_alpha: 0.5
+  use_counterfactual_grounding: true
+  counterfactual_margin: 0.5
+  counterfactual_kl_margin: 0.2
+  counterfactual_mode: batch_swap_or_zero
+data:
+  train_manifest: synthetic_data/train.jsonl
+  valid_manifest: synthetic_data/valid.jsonl
+  test_manifest: synthetic_data/test.jsonl
+  image_size: 64
+  crop_size: 32
+  num_workers: 0
+  pin_memory: false
+  max_target_tokens: 64
+  strict_source_disjoint: true
+  require_signer_disjoint: false
+train:
+  epochs: 1
+  batch_size: 2
+  visual_lr: 0.0002
+  decoder_lr: 0.00002
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip_norm: 1.0
+  amp_dtype: none
+  ctc_weight: 0.1
+  fs_spot_weight: 0.05
+  ot_weight: 0.05
+  cross_modal_weight: 0.05
+  plan_diversity_weight: 0.05
+  plan_order_weight: 0.02
+  fusion_entropy_weight: 0.02
+  counterfactual_weight: 0.05
+  label_smoothing: 0.0
+  seed: 7
+  output_dir: runs/smoke-v2
+  log_every: 1
+  save_every_epochs: 1
+

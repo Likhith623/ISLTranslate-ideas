@@ -1,5 +1,6 @@
-# High-capacity ISL-MEGA research candidate. These settings are proposals,
-# not validated optima. Run SignDINO-style pretraining before SLT fine-tuning.
+# ISL-MEGA v2 Research Architecture (all 6 Q1-proposed mechanisms enabled).
+# These settings are architectural hypotheses requiring empirical validation and
+# component ablations against configs/ablation_v1_baseline.yaml.
 vision:
   backend: timm
   timm_model_name: vit_large_patch14_dinov2.lvd142m
@@ -23,6 +24,10 @@ pose:
   dropout: 0.1
   min_confidence: 0.0
   max_interpolation_gap_seconds: 0.20
+  normalize_by_shoulder_span: true
+  share_hand_encoder: true
+  cross_articulator_graph: true
+  cross_articulator_layers: 1
 motion:
   hidden_dim: 512
   temporal_kernel: 7
@@ -33,11 +38,16 @@ fusion:
   layers: 3
   quality_dim: 5
   dropout: 0.1
+  continuous_time_lag: true
+  lag_window_seconds: 0.20
+  lag_radius_frames: 4
+  reliability_uncertainty_gate: true
 fingerspelling:
   enabled: true
   hidden_dim: 512
   layers: 3
   dropout: 0.1
+  span_routing: true
 temporal:
   dim: 1024
   local_kernels: [3, 5, 9, 15]
@@ -52,6 +62,11 @@ temporal:
   detail_window: 7
   planner_queries: 32
   planner_layers: 3
+  adaptive_consolidation: true
+  diverse_ordered_planning: true
+  dynamic_plan_routing: true
+  min_plan_queries: 4
+  plan_order_margin: 0.0
 decoder:
   model_name: google/flan-t5-xl
   local_files_only: false
@@ -60,6 +75,12 @@ decoder:
   use_semantic_ot: true
   ot_epsilon: 0.08
   ot_iterations: 30
+  plan_semantic_ot: true
+  plan_ot_alpha: 0.5
+  use_counterfactual_grounding: true
+  counterfactual_margin: 0.5
+  counterfactual_kl_margin: 0.2
+  counterfactual_mode: batch_swap_or_zero
 data:
   train_manifest: data/manifests/train.jsonl
   valid_manifest: data/manifests/valid.jsonl
@@ -81,11 +102,16 @@ train:
   grad_clip_norm: 1.0
   amp_dtype: bf16
   ctc_weight: 0.10
+  fs_spot_weight: 0.05
   ot_weight: 0.05
   cross_modal_weight: 0.05
   cross_modal_temperature: 0.07
+  plan_diversity_weight: 0.05
+  plan_order_weight: 0.02
+  fusion_entropy_weight: 0.02
+  counterfactual_weight: 0.05
   label_smoothing: 0.0
   seed: 2026
-  output_dir: runs/isl-mega-xl
+  output_dir: runs/isl-mega-v2-xl
   log_every: 20
   save_every_epochs: 1

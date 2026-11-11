@@ -16,7 +16,12 @@ from torch.utils.data import DataLoader
 from isl_mega.checkpoint import load_checkpoint, save_checkpoint
 from isl_mega.config import load_config
 from isl_mega.data import ISLVideoDataset, collate_examples, validate_split_disjointness
-from isl_mega.losses import compute_ctc_batch, compute_cross_modal_alignment_loss
+from isl_mega.losses import (
+    compute_ctc_batch,
+    compute_cross_modal_alignment_loss,
+    compute_fingerspelling_spotting_loss,
+    compute_fusion_entropy_loss,
+)
 from isl_mega.model import build_model
 from isl_mega.pretraining import load_ssl_backbone
 
@@ -50,13 +55,23 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
               max_steps: int | None = None, epoch: int = 0) -> dict:
     training = optimizer is not None
     model.train(training)
-    total, translation_total, ctc_total, ot_total, cross_total, count = 0.0, 0.0, 0.0, 0.0, 0.0, 0
+    sums = {
+        "loss": 0.0, "translation": 0.0, "ctc": 0.0, "ot": 0.0, "cross_modal": 0.0,
+        "fs_spot": 0.0, "plan_div": 0.0, "plan_ord": 0.0, "fusion_ent": 0.0, "counterfactual": 0.0,
+    }
+    count = 0
     for step, batch in enumerate(loader):
         if max_steps is not None and step >= max_steps:
             break
         inputs = model_inputs(batch, device)
         labels = tokenize_targets(tokenizer, batch["translations"], device,
                                   cfg.decoder.max_target_tokens)
+        span_targets = batch.get("fingerspelling_spans")
+        span_known = batch.get("fingerspelling_span_known")
+        if span_targets is not None:
+            span_targets = span_targets.to(device, non_blocking=True)
+        if span_known is not None:
+            span_known = span_known.to(device, non_blocking=True)
         amp_enabled = device.type == "cuda" and cfg.train.amp_dtype != "none"
         amp_dtype = torch.bfloat16 if cfg.train.amp_dtype == "bf16" else torch.float16
         if training:
@@ -65,26 +80,58 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
             out = model(
                 labels=labels,
                 semantic_ot=cfg.decoder.use_semantic_ot and cfg.train.ot_weight > 0,
+                counterfactual_grounding=(
+                    cfg.decoder.use_counterfactual_grounding and cfg.train.counterfactual_weight > 0
+                ),
                 **inputs,
             )
             translation = out["decoder_loss"]
+            zero = translation.new_zeros(())
             ctc_available = out.get("ctc_available")
             ctc_logits = out.get("ctc_logits")
             if ctc_available is not None and ctc_logits is not None and cfg.train.ctc_weight > 0:
-                ctc = compute_ctc_batch(ctc_logits, inputs["lengths"],
-                                        batch["fingerspelling_texts"], ctc_available)
+                ctc = compute_ctc_batch(
+                    ctc_logits, inputs["lengths"], batch["fingerspelling_texts"],
+                    ctc_available, span_targets=span_targets, span_known=span_known,
+                )
             else:
-                ctc = translation.new_zeros(())
-            ot = out.get("decoder_semantic_ot_loss", translation.new_zeros(()))
+                ctc = zero
+            spot_logits = out.get("spot_logits")
+            if spot_logits is not None and ctc_available is not None and cfg.train.fs_spot_weight > 0:
+                fs_spot = compute_fingerspelling_spotting_loss(
+                    spot_logits, ctc_available, inputs["lengths"],
+                    batch["fingerspelling_texts"], span_targets=span_targets, span_known=span_known,
+                )
+            else:
+                fs_spot = zero
+            ot = out.get("decoder_semantic_ot_loss", zero)
             if cfg.train.cross_modal_weight > 0:
                 cross_modal = compute_cross_modal_alignment_loss(
                     out["modality_embeddings"], out["stream_available"],
                     batch["source_ids"], cfg.train.cross_modal_temperature,
                 )
             else:
-                cross_modal = translation.new_zeros(())
-            loss = (translation + cfg.train.ctc_weight * ctc + cfg.train.ot_weight * ot
-                    + cfg.train.cross_modal_weight * cross_modal)
+                cross_modal = zero
+            plan_div = out.get("plan_diversity_loss", zero) if cfg.train.plan_diversity_weight > 0 else zero
+            plan_ord = out.get("plan_order_loss", zero) if cfg.train.plan_order_weight > 0 else zero
+            if cfg.train.fusion_entropy_weight > 0:
+                fusion_ent = compute_fusion_entropy_loss(
+                    out["modality_weights"], out["stream_available"], out["memory_mask"],
+                )
+            else:
+                fusion_ent = zero
+            counterfactual = out.get("decoder_counterfactual_loss", zero) if cfg.train.counterfactual_weight > 0 else zero
+            loss = (
+                translation
+                + cfg.train.ctc_weight * ctc
+                + cfg.train.fs_spot_weight * fs_spot
+                + cfg.train.ot_weight * ot
+                + cfg.train.cross_modal_weight * cross_modal
+                + cfg.train.plan_diversity_weight * plan_div
+                + cfg.train.plan_order_weight * plan_ord
+                + cfg.train.fusion_entropy_weight * fusion_ent
+                + cfg.train.counterfactual_weight * counterfactual
+            )
         if training:
             if scaler is not None and scaler.is_enabled():
                 scaler.scale(loss).backward()
@@ -98,24 +145,18 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
                 torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip_norm,
                                                error_if_nonfinite=True)
                 optimizer.step()
-        total += float(loss.detach())
-        translation_total += float(translation.detach())
-        ctc_total += float(ctc.detach())
-        ot_total += float(ot.detach())
-        cross_total += float(cross_modal.detach())
+        for k, val in (
+            ("loss", loss), ("translation", translation), ("ctc", ctc), ("ot", ot),
+            ("cross_modal", cross_modal), ("fs_spot", fs_spot), ("plan_div", plan_div),
+            ("plan_ord", plan_ord), ("fusion_ent", fusion_ent), ("counterfactual", counterfactual),
+        ):
+            sums[k] += float(val.detach())
         count += 1
         if training and (step + 1) % cfg.train.log_every == 0:
             print(f"epoch={epoch + 1} step={step + 1} loss={float(loss.detach()):.5f}")
     if count == 0:
         raise RuntimeError("Epoch completed without processing a batch")
-    return {
-        "loss": total / count,
-        "translation": translation_total / count,
-        "ctc": ctc_total / count,
-        "ot": ot_total / count,
-        "cross_modal": cross_total / count,
-        "batches": count,
-    }
+    return {**{k: v / count for k, v in sums.items()}, "batches": count}
 
 
 def build_epoch_scheduler(optimizer, epochs: int, warmup_ratio: float):
@@ -229,7 +270,9 @@ def main() -> None:
         writer = csv.DictWriter(
             handle,
             fieldnames=["epoch", "train_loss", "valid_loss", "train_translation",
-                        "valid_translation", "train_ctc", "train_ot", "train_cross_modal"],
+                        "valid_translation", "train_ctc", "train_fs_spot", "train_ot",
+                        "train_cross_modal", "train_plan_div", "train_plan_ord",
+                        "train_fusion_ent", "train_counterfactual"],
         )
         if write_header:
             writer.writeheader()
@@ -248,8 +291,13 @@ def main() -> None:
                 "train_translation": train_metrics["translation"],
                 "valid_translation": valid_metrics["translation"],
                 "train_ctc": train_metrics["ctc"],
+                "train_fs_spot": train_metrics["fs_spot"],
                 "train_ot": train_metrics["ot"],
                 "train_cross_modal": train_metrics["cross_modal"],
+                "train_plan_div": train_metrics["plan_div"],
+                "train_plan_ord": train_metrics["plan_ord"],
+                "train_fusion_ent": train_metrics["fusion_ent"],
+                "train_counterfactual": train_metrics["counterfactual"],
             }
             writer.writerow(row)
             handle.flush()

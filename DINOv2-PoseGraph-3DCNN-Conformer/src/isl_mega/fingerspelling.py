@@ -46,14 +46,16 @@ def greedy_ctc_decode(logits: torch.Tensor, lengths: torch.Tensor) -> list[str]:
 class FingerspellingExpert(nn.Module):
     """BiGRU/CTC specialist over paired hand appearance and pose embeddings.
 
-    The character posterior is fed back as a softly gated feature. The gate is
-    initialized near closed so an untrained specialist does not dominate SLT.
-    Train CTC only on explicitly annotated fingerspelling segments.
+    The character posterior is fed back as a softly gated feature. When
+    ``span_routing=True``, a learned temporal spotting head predicts per-frame
+    fingerspelling activity probabilities ``spot_prob`` to suppress character
+    feedback outside fingerspelled spans while preserving clean CTC logits.
     """
 
     def __init__(self, visual_dim: int, pose_dim: int, hidden_dim: int = 256, layers: int = 2,
-                 dropout: float = 0.1):
+                 dropout: float = 0.1, span_routing: bool = False):
         super().__init__()
+        self.span_routing = span_routing
         self.input = nn.Sequential(nn.Linear(2 * visual_dim + 2 * pose_dim, hidden_dim),
                                    nn.LayerNorm(hidden_dim), nn.GELU())
         self.rnn = nn.GRU(hidden_dim, hidden_dim // 2, num_layers=layers, batch_first=True,
@@ -62,6 +64,18 @@ class FingerspellingExpert(nn.Module):
         self.char_embedding = nn.Parameter(torch.randn(len(CHARACTERS) + 1, hidden_dim) * 0.02)
         self.feedback_gate = nn.Linear(hidden_dim * 2, 1)
         nn.init.constant_(self.feedback_gate.bias, -3.5)
+        if span_routing:
+            self.spot_conv = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=5, padding=2, groups=hidden_dim)
+            self.spot_head = nn.Sequential(
+                nn.Linear(hidden_dim * 2, max(hidden_dim // 2, 8)),
+                nn.GELU(),
+                nn.Linear(max(hidden_dim // 2, 8), 1),
+            )
+            # Mild negative bias so spotting precision starts conservative before CTC/MIL supervision.
+            nn.init.constant_(self.spot_head[-1].bias, -1.0)
+        else:
+            self.spot_conv = None
+            self.spot_head = None
         self.norm = nn.LayerNorm(hidden_dim)
         self.output_dim = hidden_dim
 
@@ -83,11 +97,31 @@ class FingerspellingExpert(nn.Module):
         gate = torch.sigmoid(self.feedback_gate(torch.cat([hidden, char_context], dim=-1)))
         # A one-handed spelling can still be informative; absent-hand features
         # are zeroed upstream and must not invalidate the visible hand stream.
-        available = left_valid.bool() | right_valid.bool()
-        fused = self.norm(hidden + gate * char_context)
+        length_mask = torch.arange(t, device=left_rgb.device)[None] < lengths[:, None]
+        available = (left_valid.bool() | right_valid.bool()) & length_mask
+        if self.span_routing:
+            h_clean = torch.where(available[..., None], hidden, torch.zeros_like(hidden))
+            ctx = torch.where(available[..., None], self.spot_conv(h_clean.transpose(1, 2)).transpose(1, 2),
+                              torch.zeros_like(h_clean))
+            spot_logits = self.spot_head(torch.cat([h_clean, F.gelu(ctx)], dim=-1)).squeeze(-1)
+            spot_prob = torch.sigmoid(spot_logits) * available.to(hidden.dtype)
+            spot_logits = torch.where(available, spot_logits, torch.zeros_like(spot_logits))
+            route = gate * spot_prob[..., None]
+        else:
+            spot_logits = None
+            spot_prob = available.to(hidden.dtype)
+            route = gate
+        fused = self.norm(hidden + route * char_context)
         fused = torch.where(available[..., None], fused, torch.zeros_like(fused))
         logits = torch.where(available[..., None], logits, torch.zeros_like(logits))
-        return {"features": fused, "logits": logits, "available": available, "gate": gate.squeeze(-1)}
+        return {
+            "features": fused,
+            "logits": logits,
+            "available": available,
+            "gate": route.squeeze(-1),
+            "spot_logits": spot_logits,
+            "spot_prob": spot_prob,
+        }
 
 
 def ctc_loss(logits: torch.Tensor, lengths: torch.Tensor, targets: torch.Tensor,

@@ -45,6 +45,12 @@ The 66 nodes are partitioned into four graph pathways:
 
 Each node has 11 channels: absolute `x,y`, anchor-relative `x,y`, bounded velocity `vx,vy`, bounded acceleration `ax,ay`, confidence, validity, and confidence-known indicator. Hand graphs use the MediaPipe 21-point finger chains and wrist-relative coordinates. The upper-body graph uses shoulder/elbow/wrist links and the shoulder midpoint as its preferred coordinate anchor (visible-body centroid fallback if both shoulders are absent). The sparse 18-point face graph is fully connected and face-centroid-relative. Confidence thresholding is applied only when detector confidence is actually known.
 
+When v2 mechanisms are enabled (`configs/research.yaml` / `configs/smoke_v2.yaml`), three articulatory upgrades activate cleanly via YAML ablation flags:
+
+- `normalize_by_shoulder_span`: divides anchor-relative offsets, intra-graph edge displacements, and kinematics by estimated frame torso/shoulder scale (`estimate_torso_scale` with bounded geometric fallback).
+- `share_hand_encoder`: ties left/right 21-point hand graph weights with mirror-canonical right-hand coordinate projection and a learned 2-way `hand_side_emb`.
+- `cross_articulator_graph`: runs `CrossArticulatorGraph` message passing over the 36 phonological landmarks (6 key points per hand: wrist + 5 fingertips, 6 upper-body joints, 18 face points) prior to node pooling, biased by torso-normalized pairwise offsets and 4 multi-scale spatial proximity Gaussian RBF kernels (`sigma in {0.10, 0.25, 0.60, 1.50}`).
+
 ### 3.3 Temporal motion expert
 
 The body/global crop is concatenated with its absolute frame difference and passed through two 3-D convolutional stages. Temporal stride is one; spatial dimensions are reduced. A depthwise temporal refinement follows. Masks are reapplied after temporal convolutions so batch padding cannot affect valid frame features.
@@ -53,7 +59,7 @@ The body/global crop is concatenated with its absolute frame difference and pass
 
 The two hand appearance streams and two hand pose streams enter a bidirectional GRU and character CTC head. Character posteriors are softly gated back into the frame representation. The initial feedback gate is biased mostly closed. CTC loss is trained only for records with an explicit `fingerspelling_text` label and enough valid frames.
 
-**Current scope limitation:** one character transcript per clip is supported. Timestamped sub-clip spans, character timestamps and segmentation-level routing are not implemented. If only a segment is fingerspelled, prepare a corresponding segment-level clip/record with the appropriate label rather than attaching a segment transcript to a whole-sentence clip.
+When `span_routing=true`, a local temporal spotting conv + head predicts calibrated per-frame fingerspelling activity logits/probabilities (`spot_logits`, `spot_prob`), gating posterior character feedback (`gate * spot_prob`) so non-fingerspelled lexical frames suppress character spillover without altering raw CTC logits. Optional frame-level span annotations (`fingerspelling_spans` `[Tv]` in NPZ or `[start_sec, end_sec]` intervals in JSONL) can supervise `compute_fingerspelling_spotting_loss` directly, falling back to weak clip-level MIL (noisy-OR + sparsity on positive clips, zero-target suppression on negative clips) when only clip strings exist.
 
 ## 4. Reliability-aware fusion
 
@@ -64,9 +70,12 @@ Ten streams are projected to the shared `fusion.dim`:
 - Motion.
 - Fingerspelling.
 
-Each stream provides a five-value quality descriptor: presence, ROI/pose coverage or area proxy, sharpness/motion or gate proxy, detector-confidence/availability proxy, and frame validity. The gating network learns per-frame stream weights. A local cross-stream attention stage searches residual offsets of -2 through +2 frame **indices** around each reference frame.
+Each stream provides a five-value quality descriptor: presence, ROI/pose coverage or area proxy, sharpness/motion or gate/spotting proxy, detector-confidence/availability proxy, and frame validity.
 
-These offsets are frame-index lags, not milliseconds. The base pose pipeline aligns landmarks using timestamps; the residual lag module handles small remaining sampling/processing offsets. For variable-frame-rate recordings, evaluate whether a timestamp-based lag parametrization is preferable.
+- **v1 baseline (`continuous_time_lag=false`):** Discrete cross-stream lag attention over `-2..+2` frame indices.
+- **v2 continuous-time + reliability fusion (`continuous_time_lag=true`, `reliability_uncertainty_gate=true`):**
+  1. Structural reliability calibrator `r_s(t) in (0,1)` adds `log(r)` to content utility logits (log-odds sensor gating), plus optional `compute_fusion_entropy_loss` to prevent single-stream collapse.
+  2. Continuous elapsed-time cross-stream lag attention (`ContinuousTimeLagBias`) encodes continuous `dt = t_neighbour - t_query` in seconds using normalized Fourier/polynomial features `[tau, tau^2, |tau|, sin(pi tau), cos(pi tau), sin(2 pi tau), cos(2 pi tau)]` plus signed per-stream slope priors, masking out neighbors beyond `lag_window_seconds` (invariant across variable frame rates).
 
 All-missing observations are represented by a learned null vector and remain finite. Missing streams receive zero final mixture weight.
 
@@ -85,51 +94,33 @@ A parallel multi-scale temporal convolution stem keeps the original temporal len
 
 The branch outputs are concatenated and projected to 1,024 dimensions. This operation retains all fine temporal positions.
 
-### 5.2 Coarse global reasoning
+### 5.2 Coarse global reasoning (uniform v1 vs kinematic event-boundary v2)
 
-Consecutive fine features are grouped with `coarse_stride=2`. Each group is summarized using a masked mean and a first-to-last valid difference. The final partial group uses its last valid member, not a padded zero. The coarse sequence length is `ceil(T/2)` for the default configuration.
+- **v1 baseline (`adaptive_consolidation=false`):** Consecutive fine features are grouped uniformly with `coarse_stride=2`.
+- **v2 adaptive event consolidation (`adaptive_consolidation=true`):** A boundary salience network scores per-frame visual-kinematic transition energy `[fine, delta_fine, ||delta_fine||, log1p(dt)]`. Valid cumulative salience partitions clip length `L_i` into `m_i = ceil(L_i / coarse_stride)` non-uniform soft event slots via differentiable Gaussian-RBF slot assignment `A [B, M, T]`. Static holds collapse into fewer slots while rapid signing strokes and fingerspelling retain higher slot density, with exact batch-padding invariance (`out[:, :L_i]` independent of padded batch length `T`).
 
-Twelve pre-normalized global Transformer blocks use 16 attention heads, 1,024 model dimensions, a 4,096-wide feed-forward layer and relative timestamp bias. A depthwise temporal convolution with kernel 15 provides local continuity. Self-attention provides global interaction across the full valid coarse sequence.
+Twelve pre-normalized global Transformer blocks use 16 attention heads, 1,024 model dimensions, a 4,096-wide feed-forward layer and relative timestamp bias.
 
-### 5.3 Fine detail retrieval
+### 5.3 Fine detail retrieval & reversible event unpooling
 
-Each coarse token queries a configured local window (default seven fine positions) around its temporal centre. This is sparse local retrieval, not dense all-to-all fine/coarse attention. The retrieved context is repeated across the associated fine group and concatenated with the original fine features. The final temporal representation has the original frame length `T`.
-
-This means the network does not discard the original fine-resolution pathway; it does **not** imply lossless preservation of every pixel-level detail inside learned features.
+In v1 (`adaptive_consolidation=false`), `FineDetailRetrieval` queries a local 7-frame window and broadcasts via `repeat_interleave(stride)`. In v2 (`adaptive_consolidation=true`), `AdaptiveDetailRetrieval` refines each event token across valid fine frames biased by its soft event assignment prior `assign_logits` and unpools back onto the full `T`-frame timeline using column-normalized transpose weights `B_rev^T` (`global_up = B_rev^T @ retrieved`).
 
 ## 6. Latent plan / evidence aggregation
 
-A learned bank of 32 latent queries (research config) cross-attends to the full fine-rate temporal memory. The resulting plan tokens and their query-to-frame attention maps are exposed. The frame attention is inspectable and can be visualized for qualitative analysis.
+A learned bank of up to 32 latent queries (research config) cross-attends to the fine-rate temporal memory. When `dynamic_plan_routing=true`, active plan slots scale cleanly with clip valid length (`active = clamp(ceil(valid_len / target_stride), min=min_plan_queries, max=num_queries)`), masking padded queries before self-attention and inside T5 (`plan_mask`). When `diverse_ordered_planning=true`, slot positional priors combine with normalized attention/embedding Gram orthogonality (`plan_diversity_weight`) and intrinsic clip-relative center-of-mass ordering (`plan_order_weight`). Grounding maps remain inspectable attention diagnostics, not verified human gloss labels.
 
-This is not a human-supervised grounding loss. The package does not include timestamped ground-truth evidence regions, human frame rationales or a direct attention-steering reinforcement-learning objective. Those are potential research extensions, not current implemented features.
+## 7. Text decoder & counterfactual visual grounding
 
-## 7. Text decoder
+A learned linear/LayerNorm bridge maps frame and active plan tokens to the configured T5 hidden dimension. When `plan_semantic_ot=true`, unconstrained entropic OT computes a weighted combination of frame-level OT (`visual_semantic_ot_loss`) and active-plan OT (`plan_semantic_ot_loss`).
 
-A learned linear/LayerNorm bridge maps frame and plan tokens to the configured T5 hidden dimension. They are concatenated as encoder `inputs_embeds` and supplied to the full T5 encoder-decoder. The high-capacity config uses `google/flan-t5-xl`; the smoke config uses `google/flan-t5-small`.
+When `use_counterfactual_grounding=true` and `counterfactual_weight > 0`, a detached counterfactual decoder forward pass swaps visual+plan encoder embeddings across the batch (`B >= 2`) or supplies a single blank zero token (`B == 1`), computing a token-level NLL margin hinge (`relu(margin - (nll_cf - nll_real))`) and symmetric distribution shift floor (`relu(kl_margin - KL(p_real || p_cf))`) without backpropagating gradients through synthetic mismatched inputs. This explicitly penalizes language-prior bypass where FLAN-T5 ignores visual conditioning.
 
-The decoder supports teacher-forced translation cross-entropy, optional label smoothing, generation, and an optional unconstrained entropic semantic OT regularizer between visual memory and target text encoder states. OT is not a monotonic alignment and should be evaluated as an ablation, not assumed beneficial.
+## 8. High-capacity v2 configuration & v1 baseline ablation
 
-## 8. Proposed high-capacity configuration
-
-The committed `configs/research.yaml` uses:
-
-| Component | Setting |
-|---|---|
-| Appearance | DINOv2 ViT-L/14 via timm, 1,024 dimensions |
-| Pose | 66 nodes, 512 dimensions, 3 graph layers, 8 heads |
-| Motion | 512 dimensions, two temporal 3-D conv stages |
-| Fingerspelling | 512-dimensional, 3-layer bidirectional GRU + CTC |
-| Fusion | 1,024 dimensions, 3 interaction layers, 16 heads |
-| Temporal | 1,024 dimensions, 12 global layers, 16 heads, FFN 4,096 |
-| Detail path | Coarse stride 2, local detail window 7 |
-| Planner | 32 latent queries, 3 cross-attention layers |
-| Decoder | FLAN-T5-XL |
-| Main objective | Translation CE + source-aware RGB↔pose InfoNCE + configurable CTC + configurable semantic OT |
-
-These are high-capacity starting settings, not validated optima. The T5-XL and three independent 518-pixel appearance backbones require substantial memory. Batch size must be established empirically on the actual hardware; GPU capacity alone does not establish training stability or data quality.
+`configs/research.yaml` enables all six v2 upgrades (`normalize_by_shoulder_span`, `share_hand_encoder`, `cross_articulator_graph`, `continuous_time_lag`, `reliability_uncertainty_gate`, `span_routing`, `adaptive_consolidation`, `diverse_ordered_planning`, `dynamic_plan_routing`, `plan_semantic_ot`, `use_counterfactual_grounding`); `configs/ablation_v1_baseline.yaml` disables all six at matched parameter scale for controlled ablations. All settings remain research proposals pending empirical runs on real data.
 
 ## 9. Implemented vs not implemented
 
-Implemented: the pathways and interfaces described above, source/signer split checks, self-distillation variant, translation training loop, checkpointing, metric script, and automated synthetic regression tests.
+Implemented: all v1 and v2 modules/ablation toggles above, optional `fingerspelling_spans` dataset/collate support plus clip-level MIL fallback, counterfactual visual sensitivity loss, split disjointness checks, SignDINO-inspired self-distillation variant, synthetic unit tests covering both v1 (`tests/test_architecture.py`) and v2 (`tests/test_novel_v2.py`).
 
-Not implemented: a raw undocumented `.pose` parser; landmark detector/tracker; actual ISL annotations; exact reproduction of SignDINO, SignMusketeers, Uni-Sign, SignBind-LLM or AttnSign; gloss/phrase segmentation; localized fingerspelling spans; human frame-grounding supervision; reinforcement-learning cadence steering; distributed multi-GPU trainer; human evaluation workflow; model weights.
+Not implemented: undocumented raw `.pose` binary parser; landmark detector/tracker; actual ISL videos/annotations; trained model weights; distributed multi-GPU trainer; real-data empirical results or human fluent-signer evaluation.

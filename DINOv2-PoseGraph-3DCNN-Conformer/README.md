@@ -11,16 +11,16 @@ ISL-MEGA is a research implementation candidate for gloss-free, sentence-level I
 | Pathway / system | Implementation |
 |---|---|
 | RGB appearance | Shared left/right hand ViT plus separate face and upper-body ViT backbones; optional `timm` DINOv2 initialization |
-| Articulatory geometry | Four anatomical graph encoders over 66 keypoints, with relative coordinates, velocity, acceleration, confidence and missingness features |
+| Articulatory geometry | Shared bilateral hand graph (mirror-canonicalized) + shoulder-span scale normalization + 36-node cross-articulator phonological location graph with Gaussian proximity RBFs |
 | Temporal motion | 3-D convolutional pathway over full-resolution body crops and frame differences; temporal stride is 1 |
-| Fingerspelling | BiGRU + character CTC specialist; clip-level character labels are supported |
-| Fusion | Reliability-gated ten-stream interaction with learned residual alignment over ±2 frame positions |
-| Temporal reasoning | Multi-scale full-rate temporal stem, configurable coarse global Transformer and local fine-detail retrieval back to every frame |
-| Latent planning | Learned query tokens aggregate the frame memory and expose query-to-frame attention for inspection |
-| Text generation | Optional Hugging Face T5/FLAN-T5 encoder-decoder conditioned on frame memory and latent plan tokens |
+| Fingerspelling | BiGRU + CTC specialist with calibrated frame-level span spotter (`spot_prob`) gating posterior character feedback (`span_routing`) |
+| Fusion | Log-odds reliability calibration + continuous elapsed-time (`dt` seconds) Fourier/RBF asynchronous cross-stream alignment |
+| Temporal reasoning | Multi-scale temporal stem, kinematic event-boundary adaptive slot consolidation, global Conformer, and reversible event-to-fine retrieval |
+| Latent planning | Diversity- and ordering-regularized latent queries with dynamic clip-length budget routing (`plan_mask`) |
+| Text generation | Optional Hugging Face T5/FLAN-T5 encoder-decoder conditioned on frame memory, active plan tokens, plan+frame semantic OT, and counterfactual visual grounding loss |
 | Self-supervised pretraining | Global-teacher / local-region-student DINO-style objective; this is an ISL-MEGA variant inspired by SignDINO, not a reproduction of the paper |
-| Data quality | Timestamp alignment, aspect-preserving letterboxing, coordinate/box transforms, NPZ validation and source/signer split checks |
-| Training objectives | Translation CE, source-aware RGB↔pose InfoNCE, optional fingerspelling CTC and optional unconstrained semantic OT |
+| Data quality | Timestamp alignment, aspect-preserving letterboxing, coordinate/box transforms, optional `fingerspelling_spans`, NPZ validation and source/signer split checks |
+| Training objectives | Translation CE, source-aware RGB↔pose InfoNCE, CTC + MIL/span spotting, plan diversity/order, fusion entropy, plan+visual semantic OT, counterfactual visual margin/KL |
 | Evaluation | Corpus BLEU, chrF++, TER with SacreBLEU signatures/version, and optional ROUGE-L; human sign-language evaluation is external |
 
 The RGB appearance and pose streams are separate specialists. The face appearance stream represents visual mouth/face information; the system does **not** claim to perform phoneme-level lipreading. The CTC fingerspelling expert only receives a reliable supervision signal when an explicit character transcript is provided.
@@ -158,11 +158,13 @@ python scripts/make_splits.py synthetic_data/all.jsonl --out synthetic_data
 isl-mega validate-config --config configs/smoke.yaml
 ```
 
-The smoke config points to `synthetic_data/{train,valid,test}.jsonl`. Verify group disjointness with:
+The smoke configs point to `synthetic_data/{train,valid,test}.jsonl` (`configs/smoke.yaml` for the v1 baseline contracts; `configs/smoke_v2.yaml` for all 6 v2 mechanisms). Verify group disjointness with:
 
 ```bash
 isl-mega check-splits --config configs/smoke.yaml
 ```
+
+For controlled ablations on GPU, compare `configs/ablation_v1_baseline.yaml` against `configs/research.yaml` (full v2 architecture).
 
 ## Tests
 
@@ -170,7 +172,7 @@ isl-mega check-splits --config configs/smoke.yaml
 pytest -q
 ```
 
-The automated suite covers tensor shapes, missing modalities, graph feature processing, timestamp/pose alignment, letterbox coordinate consistency, temporal padding invariance, non-default temporal strides, fingerspelling codec/CTC edge cases, visual self-distillation, checkpoint loading, and a mocked T5 adapter. It does not download or execute actual DINOv2/FLAN-T5 checkpoints.
+The automated suites (`tests/test_architecture.py` for v1 contracts and `tests/test_novel_v2.py` for all v2 upgrades) cover tensor shapes, missing modalities, torso-scale pose normalization, cross-articulator graph interactions, continuous-time lag alignment, adaptive event consolidation padding invariance, fingerspelling span routing/MIL, dynamic plan diversity, plan-level OT, and counterfactual visual sensitivity. They do not download or execute actual DINOv2/FLAN-T5 weights.
 
 ## Research references
 

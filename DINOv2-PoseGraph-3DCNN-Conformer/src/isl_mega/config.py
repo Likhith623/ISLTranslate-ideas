@@ -57,6 +57,10 @@ class PoseConfig:
     dropout: float = 0.1
     min_confidence: float = 0.0
     max_interpolation_gap_seconds: float = 0.20
+    normalize_by_shoulder_span: bool = False
+    share_hand_encoder: bool = False
+    cross_articulator_graph: bool = False
+    cross_articulator_layers: int = 1
 
     def validate(self) -> None:
         if self.num_landmarks != 66:
@@ -65,8 +69,8 @@ class PoseConfig:
             raise ValueError("Pose node feature contract is 11 channels")
         if self.hidden_dim <= 0 or self.heads <= 0 or self.hidden_dim % self.heads:
             raise ValueError("pose.hidden_dim must be positive and divisible by pose.heads")
-        if self.layers <= 0:
-            raise ValueError("pose.layers must be positive")
+        if self.layers <= 0 or self.cross_articulator_layers <= 0:
+            raise ValueError("pose.layers and cross_articulator_layers must be positive")
         _dropout(self.dropout, "pose.dropout")
         if self.max_interpolation_gap_seconds < 0:
             raise ValueError("max_interpolation_gap_seconds cannot be negative")
@@ -93,12 +97,18 @@ class FusionConfig:
     layers: int = 2
     quality_dim: int = 5
     dropout: float = 0.1
+    continuous_time_lag: bool = False
+    lag_window_seconds: float = 0.20
+    lag_radius_frames: int = 4
+    reliability_uncertainty_gate: bool = False
 
     def validate(self) -> None:
         if self.dim < 2 or self.num_heads <= 0 or self.dim % self.num_heads:
             raise ValueError("fusion.dim must be >=2 and divisible by fusion.num_heads")
         if self.layers <= 0 or self.quality_dim != 5:
             raise ValueError("fusion.layers must be positive and quality_dim must equal 5")
+        if self.lag_window_seconds <= 0 or self.lag_radius_frames < 0:
+            raise ValueError("fusion.lag_window_seconds must be positive and lag_radius_frames >= 0")
         _dropout(self.dropout, "fusion.dropout")
 
 
@@ -109,6 +119,7 @@ class FingerspellingConfig:
     layers: int = 2
     dropout: float = 0.1
     vocabulary: str = "abcdefghijklmnopqrstuvwxyz0123456789-' "
+    span_routing: bool = False
 
     def validate(self) -> None:
         if self.hidden_dim < 2 or self.hidden_dim % 2 or self.layers <= 0:
@@ -133,6 +144,11 @@ class TemporalConfig:
     detail_window: int = 7
     planner_queries: int = 16
     planner_layers: int = 2
+    adaptive_consolidation: bool = False
+    diverse_ordered_planning: bool = False
+    dynamic_plan_routing: bool = False
+    min_plan_queries: int = 2
+    plan_order_margin: float = 0.0
 
     def validate(self) -> None:
         if self.dim <= 0 or self.heads <= 0 or self.dim % self.heads:
@@ -149,6 +165,10 @@ class TemporalConfig:
             raise ValueError("coarse_stride >= 2 and positive odd detail_window required")
         if self.planner_queries <= 0 or self.planner_layers <= 0:
             raise ValueError("planner settings must be positive")
+        if not 1 <= self.min_plan_queries <= self.planner_queries:
+            raise ValueError("min_plan_queries must be in [1, planner_queries]")
+        if self.plan_order_margin < 0:
+            raise ValueError("plan_order_margin cannot be negative")
         if self.relative_time_buckets < 4 or self.relative_time_buckets % 2:
             raise ValueError("relative_time_buckets must be even and >= 4")
         if self.max_elapsed_seconds <= 1e-5:
@@ -166,12 +186,24 @@ class DecoderConfig:
     use_semantic_ot: bool = True
     ot_epsilon: float = 0.08
     ot_iterations: int = 30
+    plan_semantic_ot: bool = False
+    plan_ot_alpha: float = 0.5
+    use_counterfactual_grounding: bool = False
+    counterfactual_margin: float = 0.5
+    counterfactual_kl_margin: float = 0.2
+    counterfactual_mode: str = "batch_swap_or_zero"
 
     def validate(self) -> None:
         if not self.model_name:
             raise ValueError("decoder.model_name is required")
         if self.max_target_tokens <= 0 or self.ot_iterations <= 0 or self.ot_epsilon <= 0:
             raise ValueError("Decoder token/OT settings must be positive")
+        if not 0.0 <= self.plan_ot_alpha <= 1.0:
+            raise ValueError("decoder.plan_ot_alpha must be in [0,1]")
+        if self.counterfactual_margin < 0 or self.counterfactual_kl_margin < 0:
+            raise ValueError("counterfactual margins cannot be negative")
+        if self.counterfactual_mode not in {"batch_swap_or_zero", "zero"}:
+            raise ValueError("decoder.counterfactual_mode must be 'batch_swap_or_zero' or 'zero'")
 
 
 @dataclass
@@ -208,6 +240,11 @@ class TrainConfig:
     ot_weight: float = 0.05
     cross_modal_weight: float = 0.05
     cross_modal_temperature: float = 0.07
+    plan_diversity_weight: float = 0.0
+    plan_order_weight: float = 0.0
+    fs_spot_weight: float = 0.0
+    fusion_entropy_weight: float = 0.0
+    counterfactual_weight: float = 0.0
     label_smoothing: float = 0.0
     seed: int = 2026
     output_dir: str = "runs/isl-mega"
@@ -225,7 +262,11 @@ class TrainConfig:
             raise ValueError("amp_dtype must be bf16, fp16, or none")
         if self.log_every <= 0 or self.save_every_epochs <= 0:
             raise ValueError("log_every and save_every_epochs must be positive")
-        for name in ("ctc_weight", "ot_weight", "cross_modal_weight", "label_smoothing"):
+        for name in (
+            "ctc_weight", "ot_weight", "cross_modal_weight", "label_smoothing",
+            "plan_diversity_weight", "plan_order_weight", "fs_spot_weight",
+            "fusion_entropy_weight", "counterfactual_weight",
+        ):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} cannot be negative")
         if self.cross_modal_temperature <= 0:

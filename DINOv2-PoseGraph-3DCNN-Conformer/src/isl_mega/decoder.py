@@ -25,63 +25,156 @@ class T5VisualDecoder(nn.Module):
             for p in self.model.parameters():
                 p.requires_grad_(False)
 
-    def encode_inputs(self, visual: torch.Tensor, visual_mask: torch.Tensor,
-                      plan: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def encode_inputs(
+        self,
+        visual: torch.Tensor,
+        visual_mask: torch.Tensor,
+        plan: torch.Tensor,
+        plan_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if plan_mask is None:
+            plan_mask = torch.ones(plan.shape[:2], dtype=visual_mask.dtype, device=visual_mask.device)
         v = self.bridge(visual)
+        v = torch.where(visual_mask.bool()[..., None], v, torch.zeros_like(v))
         p = self.plan_bridge(plan)
+        p = torch.where(plan_mask.bool()[..., None], p, torch.zeros_like(p))
         embeddings = torch.cat([v, p], dim=1)
-        plan_mask = torch.ones(plan.shape[:2], dtype=visual_mask.dtype, device=visual_mask.device)
-        mask = torch.cat([visual_mask.to(plan_mask.dtype), plan_mask], dim=1)
+        mask = torch.cat([visual_mask.to(plan_mask.dtype), plan_mask.to(visual_mask.dtype)], dim=1)
         return embeddings, mask
 
-    def forward(self, visual: torch.Tensor, visual_mask: torch.Tensor, plan: torch.Tensor,
-                labels: torch.Tensor, semantic_ot: bool = False, ot_epsilon: float = 0.08,
-                ot_iterations: int = 30, label_smoothing: float = 0.0) -> dict:
+    def _decoder_mask(self, labels: torch.Tensor) -> torch.Tensor:
+        return torch.cat([
+            torch.ones((labels.shape[0], 1), dtype=torch.long, device=labels.device),
+            labels[:, :-1].ne(-100).long(),
+        ], dim=1)
+
+    @staticmethod
+    def _per_token_ce(logits: torch.Tensor, labels: torch.Tensor, label_smoothing: float = 0.0) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        log_probs = F.log_softmax(logits.float(), dim=-1)
+        valid = labels.ne(-100)
+        safe_labels = labels.masked_fill(~valid, 0)
+        nll = -log_probs.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1)
+        if label_smoothing > 0.0:
+            smooth = -log_probs.mean(dim=-1)
+            per_token = (1.0 - label_smoothing) * nll + label_smoothing * smooth
+        else:
+            per_token = nll
+        loss = (per_token * valid).sum() / valid.sum().clamp_min(1)
+        return loss, nll, valid
+
+    def forward(
+        self,
+        visual: torch.Tensor,
+        visual_mask: torch.Tensor,
+        plan: torch.Tensor,
+        labels: torch.Tensor,
+        semantic_ot: bool = False,
+        ot_epsilon: float = 0.08,
+        ot_iterations: int = 30,
+        label_smoothing: float = 0.0,
+        plan_mask: torch.Tensor | None = None,
+        plan_semantic_ot: bool = False,
+        plan_ot_alpha: float = 0.5,
+        counterfactual_grounding: bool = False,
+        counterfactual_margin: float = 0.5,
+        counterfactual_kl_margin: float = 0.2,
+        counterfactual_mode: str = "batch_swap_or_zero",
+    ) -> dict:
         if labels.ndim != 2 or labels.shape[0] != visual.shape[0]:
             raise ValueError("labels must have shape [B,L] matching visual batch size")
         if not 0.0 <= label_smoothing < 1.0:
             raise ValueError("label_smoothing must be in [0,1)")
-        embeddings, mask = self.encode_inputs(visual, visual_mask, plan)
+        eff_plan_mask = (
+            plan_mask if plan_mask is not None
+            else torch.ones(plan.shape[:2], dtype=visual_mask.dtype, device=visual_mask.device)
+        )
+        embeddings, mask = self.encode_inputs(visual, visual_mask, plan, plan_mask=eff_plan_mask)
         if label_smoothing == 0.0:
             output = self.model(inputs_embeds=embeddings, attention_mask=mask.long(), labels=labels,
                                 use_cache=False, return_dict=True)
             loss = output.loss
+            _, real_nll, valid_tok = self._per_token_ce(output.logits, labels, 0.0)
         else:
             decoder_input_ids = self.model.prepare_decoder_input_ids_from_labels(labels=labels)
             # T5 commonly uses pad_token_id as decoder_start_token_id. The first
             # shifted token is therefore numerically equal to PAD but is a real
             # start symbol and must remain visible to decoder self-attention.
-            decoder_mask = torch.cat([
-                torch.ones((labels.shape[0], 1), dtype=torch.long, device=labels.device),
-                labels[:, :-1].ne(-100).long(),
-            ], dim=1)
+            decoder_mask = self._decoder_mask(labels)
             output = self.model(inputs_embeds=embeddings, attention_mask=mask.long(),
                                 decoder_input_ids=decoder_input_ids,
                                 decoder_attention_mask=decoder_mask, use_cache=False, return_dict=True)
-            log_probs = F.log_softmax(output.logits.float(), dim=-1)
-            valid = labels.ne(-100)
-            safe_labels = labels.masked_fill(~valid, 0)
-            nll = -log_probs.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1)
-            smooth = -log_probs.mean(dim=-1)
-            per_token = (1.0 - label_smoothing) * nll + label_smoothing * smooth
-            loss = (per_token * valid).sum() / valid.sum().clamp_min(1)
+            loss, real_nll, valid_tok = self._per_token_ce(output.logits, labels, label_smoothing)
+
         result = {"loss": loss, "logits": output.logits,
                   "encoder_last_hidden_state": output.encoder_last_hidden_state}
+
         if semantic_ot:
             text_ids = labels.masked_fill(labels < 0, self.model.config.pad_token_id)
             text_mask = text_ids.ne(self.model.config.pad_token_id)
             text_output = self.model.encoder(input_ids=text_ids, attention_mask=text_mask.long(),
                                              return_dict=True)
-            result["semantic_ot_loss"] = entropic_semantic_ot(
-                output.encoder_last_hidden_state[:, :visual.shape[1]], visual_mask,
+            enc_hidden = output.encoder_last_hidden_state
+            visual_ot = entropic_semantic_ot(
+                enc_hidden[:, :visual.shape[1]], visual_mask,
                 text_output.last_hidden_state, text_mask, epsilon=ot_epsilon, iterations=ot_iterations,
             )
+            result["visual_semantic_ot_loss"] = visual_ot
+            if plan_semantic_ot:
+                plan_ot = entropic_semantic_ot(
+                    enc_hidden[:, visual.shape[1]:], eff_plan_mask,
+                    text_output.last_hidden_state, text_mask, epsilon=ot_epsilon, iterations=ot_iterations,
+                )
+                result["plan_semantic_ot_loss"] = plan_ot
+                result["semantic_ot_loss"] = (1.0 - plan_ot_alpha) * visual_ot + plan_ot_alpha * plan_ot
+            else:
+                result["semantic_ot_loss"] = visual_ot
+
+        if counterfactual_grounding:
+            b = embeddings.shape[0]
+            if b >= 2 and counterfactual_mode == "batch_swap_or_zero":
+                cf_embeds = embeddings.roll(1, dims=0).detach()
+                cf_mask = mask.roll(1, dims=0).long()
+            else:
+                cf_embeds = torch.zeros_like(embeddings.detach())
+                cf_mask = torch.zeros_like(mask, dtype=torch.long)
+                cf_mask[:, 0] = 1
+            with torch.no_grad():
+                decoder_input_ids = self.model.prepare_decoder_input_ids_from_labels(labels=labels)
+                decoder_mask = self._decoder_mask(labels)
+                cf_out = self.model(
+                    inputs_embeds=cf_embeds,
+                    attention_mask=cf_mask,
+                    decoder_input_ids=decoder_input_ids,
+                    decoder_attention_mask=decoder_mask,
+                    use_cache=False,
+                    return_dict=True,
+                )
+            _, cf_nll, _ = self._per_token_ce(cf_out.logits.detach(), labels, 0.0)
+            denom = valid_tok.sum().clamp_min(1)
+            margin_tok = F.relu(counterfactual_margin - (cf_nll.detach() - real_nll).clamp(-5.0, 5.0))
+            margin_loss = (margin_tok * valid_tok).sum() / denom
+            real_probs = F.softmax(output.logits.float(), dim=-1)
+            real_logp = F.log_softmax(output.logits.float(), dim=-1)
+            cf_logp = F.log_softmax(cf_out.logits.float().detach(), dim=-1)
+            kl_tok = (real_probs * (real_logp - cf_logp)).sum(dim=-1).clamp_min(0.0)
+            kl_loss = (F.relu(counterfactual_kl_margin - kl_tok) * valid_tok).sum() / denom
+            result["counterfactual_loss"] = 0.5 * margin_loss + 0.5 * kl_loss
+            result["counterfactual_nll_gap"] = ((cf_nll.detach() - real_nll.detach()) * valid_tok).sum() / denom
+
         return result
 
     @torch.no_grad()
-    def generate(self, visual: torch.Tensor, visual_mask: torch.Tensor, plan: torch.Tensor,
-                 num_beams: int = 4, max_new_tokens: int = 256, length_penalty: float = 1.0):
-        embeddings, mask = self.encode_inputs(visual, visual_mask, plan)
+    def generate(
+        self,
+        visual: torch.Tensor,
+        visual_mask: torch.Tensor,
+        plan: torch.Tensor,
+        num_beams: int = 4,
+        max_new_tokens: int = 256,
+        length_penalty: float = 1.0,
+        plan_mask: torch.Tensor | None = None,
+    ):
+        embeddings, mask = self.encode_inputs(visual, visual_mask, plan, plan_mask=plan_mask)
         # Supplying explicit encoder_outputs is more portable across Transformers
         # versions than relying on GenerationMixin's inputs_embeds handling.
         encoder_outputs = self.model.encoder(
