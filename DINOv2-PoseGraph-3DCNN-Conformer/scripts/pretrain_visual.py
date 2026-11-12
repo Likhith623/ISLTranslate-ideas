@@ -34,7 +34,7 @@ def main():
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=2e-4, weight_decay=0.04)
     model.train()
     for epoch in range(args.epochs):
-        running, count = 0.0, 0
+        running, crop_total, count = 0.0, 0, 0
         for batch in loader:
             frames = batch["frames"].to(device)
             mask = batch["frame_mask"].to(device)
@@ -47,15 +47,19 @@ def main():
             frame_valid = mask.reshape(-1) & local_valid.any(-1)
             if not frame_valid.any():
                 continue
-            loss, center = model(global_frames[frame_valid], local[frame_valid], local_valid[frame_valid])
+            valid_local_mask = local_valid[frame_valid]
+            crop_count = int(valid_local_mask.sum().item())
+            loss, center = model(global_frames[frame_valid], local[frame_valid], valid_local_mask)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.student.parameters(), 1.0)
             optimizer.step()
             model.update_teacher(0.996)
             model.update_center(center)
-            running += float(loss.detach()); count += 1
-        print(f"epoch={epoch+1} loss={running/max(count,1):.5f} batches={count}")
+            running += float(loss.detach()) * crop_count
+            crop_total += crop_count
+            count += 1
+        print(f"epoch={epoch+1} loss={running/max(crop_total,1):.5f} batches={count} crops={crop_total}")
     out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(out.suffix + ".tmp")
     torch.save({"student_backbone": model.student.state_dict(),

@@ -98,6 +98,7 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
                 ctc = compute_ctc_batch(
                     ctc_logits, inputs["lengths"], batch["fingerspelling_texts"],
                     ctc_available, span_targets=span_targets, span_known=span_known,
+                    label_known=label_known,
                 )
             else:
                 ctc = zero
@@ -144,7 +145,7 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip_norm,
-                                               error_if_nonfinite=True)
+                                               error_if_nonfinite=False)
                 scaler.step(optimizer)
                 scaler.update()
             else:
@@ -270,7 +271,7 @@ def main() -> None:
     global_step = 0
     best_valid = float("inf")
     if args.resume:
-        state = load_checkpoint(args.resume, model, optimizer, scheduler, map_location=device)
+        state = load_checkpoint(args.resume, model, optimizer, scheduler, map_location=device, scaler=scaler)
         start_epoch = int(state["epoch"])
         global_step = int(state.get("step", 0))
         best_valid = float(state.get("extra", {}).get("best_valid_loss", float("inf")))
@@ -332,14 +333,14 @@ def main() -> None:
                 best_valid = valid_metrics["loss"]
             checkpoint_extra = {"best_valid_loss": best_valid, "valid_loss": valid_metrics["loss"]}
             save_checkpoint(out_dir / "last.pt", model, optimizer, scheduler,
-                            epoch + 1, global_step, cfg, extra=checkpoint_extra)
+                            epoch + 1, global_step, cfg, extra=checkpoint_extra, scaler=scaler)
             if is_best:
                 save_checkpoint(out_dir / "best_valid.pt", model, optimizer, scheduler,
-                                epoch + 1, global_step, cfg, extra=checkpoint_extra)
+                                epoch + 1, global_step, cfg, extra=checkpoint_extra, scaler=scaler)
             if (epoch + 1) % cfg.train.save_every_epochs == 0:
                 save_checkpoint(out_dir / f"epoch_{epoch + 1:03d}.pt", model,
                                 optimizer, scheduler, epoch + 1, global_step, cfg,
-                                extra=checkpoint_extra)
+                                extra=checkpoint_extra, scaler=scaler)
             if args.max_steps is not None:
                 print("Debug max_steps was set; training exited after one capped epoch.")
                 break

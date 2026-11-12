@@ -26,21 +26,22 @@ def compute_ctc_batch(
     availability: torch.Tensor | None = None,
     span_targets: torch.Tensor | None = None,
     span_known: torch.Tensor | None = None,
+    label_known: torch.Tensor | None = None,
 ) -> torch.Tensor:
     sequences = [encode_characters(x) for x in texts]
     selected_logits, selected_targets, selected_lengths = [], [], []
     for i, seq in enumerate(sequences):
+        if label_known is not None and not bool(label_known[i]):
+            continue
         if not seq:
             continue
         length = int(input_lengths[i])
         valid = (availability[i, :length].bool() if availability is not None
                  else torch.ones(length, dtype=torch.bool, device=logits.device))
+        if span_targets is not None and span_known is not None and bool(span_known[i]):
+            valid = valid & span_targets[i, :length].bool()
         repeated = sum(a == b for a, b in zip(seq, seq[1:]))
         minimum_steps = len(seq) + repeated
-        if span_targets is not None and span_known is not None and bool(span_known[i]):
-            spanned = valid & span_targets[i, :length].bool()
-            if int(spanned.sum()) >= minimum_steps:
-                valid = spanned
         row = logits[i, :length][valid]
         if len(row) < minimum_steps:
             continue

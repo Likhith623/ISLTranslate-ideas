@@ -66,7 +66,7 @@ def estimate_torso_scale(xy: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
     b_xy, b_valid = xy[:, :, BODY], valid[:, :, BODY]
     both_shoulders = b_valid[:, :, 0] & b_valid[:, :, 1]
     shoulder_diff = b_xy[:, :, 0] - b_xy[:, :, 1]
-    shoulder_span = torch.sqrt(shoulder_diff.square().sum(dim=-1) + 1e-8)
+    shoulder_span = torch.sqrt(shoulder_diff.float().square().sum(dim=-1) + 1e-8).to(xy.dtype)
 
     def _spread(pts: torch.Tensor, m: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         big = torch.full_like(pts, -1e4)
@@ -74,7 +74,7 @@ def estimate_torso_scale(xy: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
         hi = torch.where(m[..., None], pts, big).amax(dim=2)
         lo = torch.where(m[..., None], pts, small).amin(dim=2)
         span = (hi - lo).clamp_min(0.0)
-        diag = torch.sqrt(span.square().sum(dim=-1) + 1e-8)
+        diag = torch.sqrt(span.float().square().sum(dim=-1) + 1e-8).to(pts.dtype)
         return diag, m.sum(dim=2) >= 2
 
     body_diag, body_ok = _spread(b_xy, b_valid)
@@ -121,7 +121,7 @@ class EdgeGraphBlock(nn.Module):
             rel = xy[:, :, None, :] - xy[:, None, :, :]
             if scale is not None:
                 rel = rel / scale.view(b, 1, 1, 1)
-            dist = torch.sqrt(rel.square().sum(dim=-1, keepdim=True) + 1e-8)
+            dist = torch.sqrt(rel.float().square().sum(dim=-1, keepdim=True) + 1e-8).to(rel.dtype)
             edge = torch.cat([rel, dist, torch.ones_like(dist)], dim=-1)
         else:
             edge = edge_features
@@ -252,7 +252,7 @@ class CrossArticulatorGraph(nn.Module):
         s = scale.reshape(b * t, 1, 1, 1)
 
         rel = (p[:, :, None, :] - p[:, None, :, :]) / s
-        dist = torch.sqrt(rel.square().sum(dim=-1, keepdim=True) + 1e-8)
+        dist = torch.sqrt(rel.float().square().sum(dim=-1, keepdim=True) + 1e-8).to(rel.dtype)
         rbf = torch.exp(-0.5 * (dist / self.rbf_sigmas.to(dist).view(1, 1, 1, -1)).square())
         edge_feat = torch.cat([rel, dist, rbf, torch.ones_like(dist)], dim=-1)
 

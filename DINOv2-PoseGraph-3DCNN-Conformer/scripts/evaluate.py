@@ -14,6 +14,38 @@ from isl_mega.checkpoint import load_checkpoint
 from isl_mega.metrics import translation_metrics
 
 
+def build_eval_split_records(manifest: str | Path, cfg, ds_records: list[dict]) -> dict[str, list[dict]]:
+    common = (cfg.data.crop_size, cfg.data.image_size, cfg.pose.max_interpolation_gap_seconds)
+    manifest_path = Path(manifest).resolve()
+    train_path = Path(cfg.data.train_manifest).resolve()
+    valid_path = Path(cfg.data.valid_manifest).resolve()
+    test_path = Path(cfg.data.test_manifest).resolve()
+
+    split_records: dict[str, list[dict]] = {}
+    if manifest_path == train_path:
+        split_records["train"] = ds_records
+    else:
+        train_meta = ISLVideoDataset(cfg.data.train_manifest, *common)
+        split_records["train"] = [vars(r) for r in train_meta.records]
+
+    if manifest_path == valid_path:
+        split_records["valid"] = ds_records
+    else:
+        valid_meta = ISLVideoDataset(cfg.data.valid_manifest, *common)
+        split_records["valid"] = [vars(r) for r in valid_meta.records]
+
+    if manifest_path == test_path:
+        if "test" not in split_records:
+            split_records["test"] = ds_records
+    elif manifest_path in {train_path, valid_path}:
+        if test_path.exists() and test_path not in {train_path, valid_path}:
+            test_meta = ISLVideoDataset(cfg.data.test_manifest, *common)
+            split_records["test"] = [vars(r) for r in test_meta.records]
+    else:
+        split_records["eval"] = ds_records
+    return split_records
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="configs/research.yaml")
@@ -32,15 +64,7 @@ def main():
     ds = ISLVideoDataset(manifest, cfg.data.crop_size, cfg.data.image_size,
                          cfg.pose.max_interpolation_gap_seconds)
     if cfg.data.strict_source_disjoint or cfg.data.require_signer_disjoint:
-        train_meta = ISLVideoDataset(cfg.data.train_manifest, cfg.data.crop_size, cfg.data.image_size,
-                                     cfg.pose.max_interpolation_gap_seconds)
-        valid_meta = ISLVideoDataset(cfg.data.valid_manifest, cfg.data.crop_size, cfg.data.image_size,
-                                     cfg.pose.max_interpolation_gap_seconds)
-        split_records = {
-            "train": [vars(r) for r in train_meta.records],
-            "valid": [vars(r) for r in valid_meta.records],
-            "test": [vars(r) for r in ds.records],
-        }
+        split_records = build_eval_split_records(manifest, cfg, [vars(r) for r in ds.records])
         if cfg.data.strict_source_disjoint:
             validate_split_disjointness(split_records, "source_id")
         if cfg.data.require_signer_disjoint:

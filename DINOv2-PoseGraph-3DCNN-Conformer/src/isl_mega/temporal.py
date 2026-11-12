@@ -215,8 +215,8 @@ class HierarchicalTemporalEncoder(nn.Module):
         ])
         self.time_bias = RelativeTimeBias(config.heads, config.relative_time_buckets,
                                           config.max_elapsed_seconds)
-        self.detail = FineDetailRetrieval(config.dim, config.heads, config.detail_window, config.coarse_stride)
         if config.adaptive_consolidation:
+            self.detail = None
             self.salience_net = nn.Sequential(
                 nn.Linear(config.dim * 2 + 2, max(config.dim // 2, 32)),
                 nn.GELU(),
@@ -226,6 +226,7 @@ class HierarchicalTemporalEncoder(nn.Module):
             self.slot_spread_proj = nn.Linear(1, config.dim)
             self.adaptive_detail = AdaptiveDetailRetrieval(config.dim, config.heads)
         else:
+            self.detail = FineDetailRetrieval(config.dim, config.heads, config.detail_window, config.coarse_stride)
             self.salience_net = None
             self.log_slot_sigma = None
             self.slot_spread_proj = None
@@ -252,9 +253,11 @@ class HierarchicalTemporalEncoder(nn.Module):
             delta[:, 1:] = torch.where(valid_pairs[..., None], fine[:, 1:] - fine[:, :-1],
                                        torch.zeros_like(fine[:, 1:]))
             raw_dt = (timestamps[:, 1:] - timestamps[:, :-1]).clamp_min(1e-4)
-            step_dt[:, 1:] = torch.where(valid_pairs, raw_dt, step_dt[:, 1:])
+            step_dt[:, 1:] = torch.where(valid_pairs, raw_dt.to(step_dt.dtype), step_dt[:, 1:])
 
-        delta_norm = torch.sqrt(delta.square().sum(dim=-1, keepdim=True) + 1e-8) / math.sqrt(d)
+        delta_norm = (
+            torch.sqrt(delta.float().square().sum(dim=-1, keepdim=True) + 1e-8) / math.sqrt(d)
+        ).to(fine.dtype)
         salience_in = torch.cat([fine, delta, delta_norm, torch.log1p(step_dt).unsqueeze(-1)], dim=-1)
         salience = F.softplus(self.salience_net(salience_in).squeeze(-1).float()) + 0.1
         salience = torch.where(fine_mask, salience, torch.zeros_like(salience))

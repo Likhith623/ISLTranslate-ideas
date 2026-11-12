@@ -60,7 +60,7 @@ def main() -> None:
         frame_counts.append(float(t))
         durations.append(float(sample["timestamps"][-1].item()) if t > 1 else 0.0)
         point_coverage.append(float(sample["pose_valid"].float().mean().item()))
-        for region, (start, stop) in zip(REGION_ORDER, ((48, 66), (0, 21), (21, 42), (0, 48))):
+        for region, (start, stop) in zip(REGION_ORDER, ((48, 66), (0, 21), (21, 42), (42, 48))):
             region_coverage[region].append(float(sample["pose_valid"][:, start:stop].float().mean().item()))
         source_ids.add(sample["source_id"])
         if sample["signer_id"]:
