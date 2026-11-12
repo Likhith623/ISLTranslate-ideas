@@ -17,6 +17,7 @@ from isl_mega.losses import (
     compute_ctc_batch,
     compute_fingerspelling_spotting_loss,
     compute_fusion_entropy_loss,
+    compute_quality_calibration_loss,
 )
 from isl_mega.model import ISLMEGA, build_model
 from isl_mega.planning import LatentPlanGrounder
@@ -26,6 +27,16 @@ from isl_mega.temporal import HierarchicalTemporalEncoder
 
 def v2_smoke_config():
     return load_config(Path(__file__).parents[1] / "configs" / "smoke_v2.yaml")
+
+
+def test_quality_calibration_prefers_observed_reliability_and_masks_missing_streams():
+    quality = torch.tensor([[[[1.0, 1.0], [0.1, 0.1], [0.0, 0.0]]]])
+    available = torch.tensor([[[True, True, False]]])
+    target = torch.tensor([[[0.9091, 0.0909, 0.0]]])
+    uniform = torch.tensor([[[0.5, 0.5, 0.0]]])
+    assert compute_quality_calibration_loss(target, quality, available).item() < compute_quality_calibration_loss(
+        uniform, quality, available
+    ).item()
 
 
 def make_batch_inputs(batch: int = 2, time: int = 8, image: int = 64):

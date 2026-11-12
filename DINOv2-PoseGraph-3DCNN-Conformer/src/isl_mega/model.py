@@ -158,6 +158,7 @@ class ISLMEGA(nn.Module):
             "grounding_attention": grounding, "modality_weights": modality_weights,
             "modality_interactions": interacted,
             "modality_embeddings": modality_embeddings,
+            "stream_quality": torch.stack([quality[name] for name in STREAM_NAMES], dim=2),
             "stream_available": torch.stack([available[name] for name in STREAM_NAMES], dim=2),
             "ctc_logits": fs["logits"] if fs is not None else None,
             "ctc_available": fs["available"] if fs is not None else None,

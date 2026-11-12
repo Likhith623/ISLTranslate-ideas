@@ -102,3 +102,20 @@ Report the annotation protocol, number and qualifications of raters, agreement a
 The literature already contains multi-region hand/face/body encoders, RGB-pose fusion, sign-specific self-supervised learning, fingerspelling/lipreading experts, attention steering and latent planning approaches. ISL-MEGA is therefore a synthesis proposal. A credible contribution must be narrowed to a testable new mechanism (for example, timestamp-aware reliability fusion across asynchronous anatomical experts with full-rate evidence retrieval) and shown to improve over controlled, matched baselines.
 
 A Q1 journal quartile is a journal-level classification, not an architecture property. Acceptance depends on novelty, technical correctness, significance, writing, fit and peer review. No implementation or benchmark score guarantees it.
+
+## 8. Proposed primary contribution: quality-calibrated asynchronous fusion
+
+The active research configuration adds `fusion_calibration_weight` to the existing
+timestamp-aware reliability fusion. For each frame and anatomical stream, the
+model receives five contract-level quality signals. Their masked mean is
+normalized across available streams and used as a training target for the
+predicted fusion distribution through a KL divergence. Missing streams are
+excluded from both target construction and loss reduction.
+
+This is a mechanism hypothesis, not a novelty claim by itself. The paper must
+compare it against the same model with the calibration weight set to zero,
+uniform fusion, and the original learned gate. Required stress tests should
+inject controlled hand, face, body, pose, blur, and timestamp corruption while
+reporting translation quality, stream-weight retention, calibration error, and
+latency error. The contribution is publishable only if the matched ablations
+show consistent gains across independent seeds and held-out signers.

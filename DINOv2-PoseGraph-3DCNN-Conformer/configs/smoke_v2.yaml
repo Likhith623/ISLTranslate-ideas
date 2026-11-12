@@ -101,6 +101,7 @@ train:
   plan_diversity_weight: 0.05
   plan_order_weight: 0.02
   fusion_entropy_weight: 0.02
+  fusion_calibration_weight: 0.05
   counterfactual_weight: 0.05
   label_smoothing: 0.0
   seed: 7

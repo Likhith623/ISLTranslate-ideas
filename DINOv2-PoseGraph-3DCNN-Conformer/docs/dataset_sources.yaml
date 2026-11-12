@@ -1,0 +1,24 @@
+# Verified dataset provenance registry. URLs document sources; acquisition is not automated.
+# Do not claim a dataset is runnable until it has been converted to the ISL-MEGA JSONL/NPZ contract.
+datasets:
+  isltranslate:
+    official_source: https://github.com/Exploration-Lab/ISLTranslate
+    paper: https://aclanthology.org/2023.findings-acl.665/
+    license: CC-BY-NC-4.0
+    status: requires_video_pose_conversion
+  isign_v1_1:
+    official_source: https://huggingface.co/datasets/Exploration-Lab/iSign
+    paper: https://arxiv.org/abs/2407.05404
+    license: CC-BY-NC-SA-4.0
+    status: gated_external_acquisition
+  glosl_isl:
+    official_source: https://huggingface.co/datasets/pedroodb/glosl-isl
+    package: https://pypi.org/project/glosl/
+    license: CC-BY-NC-4.0
+    status: pose_only_incompatible_without_rgb
+  isl_fingerspelling:
+    official_source: https://huggingface.co/datasets/kirandevraj/ISL-Fingerspelling
+    code: https://github.com/Kirandevraj/ISL-Fingerspelling-Dense
+    paper: https://aclanthology.org/2025.wslp-main.6/
+    license: CC-BY-NC-4.0
+    status: auxiliary_fingerspelling_only

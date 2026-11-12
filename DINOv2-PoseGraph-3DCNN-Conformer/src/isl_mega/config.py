@@ -255,6 +255,7 @@ class TrainConfig:
     plan_order_weight: float = 0.0
     fs_spot_weight: float = 0.0
     fusion_entropy_weight: float = 0.0
+    fusion_calibration_weight: float = 0.0
     counterfactual_weight: float = 0.0
     label_smoothing: float = 0.0
     seed: int = 2026
@@ -280,6 +281,7 @@ class TrainConfig:
             "ctc_weight", "ot_weight", "cross_modal_weight", "label_smoothing",
             "plan_diversity_weight", "plan_order_weight", "fs_spot_weight",
             "fusion_entropy_weight", "counterfactual_weight",
+            "fusion_calibration_weight",
         ):
             if not _finite_in_bounds(getattr(self, name), 0.0, None):
                 raise ValueError(f"{name} cannot be negative or nonfinite")

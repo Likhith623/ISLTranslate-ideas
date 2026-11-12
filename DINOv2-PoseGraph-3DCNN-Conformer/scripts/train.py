@@ -22,6 +22,7 @@ from isl_mega.losses import (
     compute_cross_modal_alignment_loss,
     compute_fingerspelling_spotting_loss,
     compute_fusion_entropy_loss,
+    compute_quality_calibration_loss,
 )
 from isl_mega.model import build_model
 from isl_mega.pretraining import load_ssl_backbone
@@ -68,6 +69,7 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
     sums = {
         "loss": 0.0, "translation": 0.0, "ctc": 0.0, "ot": 0.0, "cross_modal": 0.0,
         "fs_spot": 0.0, "plan_div": 0.0, "plan_ord": 0.0, "fusion_ent": 0.0,
+        "fusion_calibration": 0.0,
         "counterfactual": 0.0, "cf_nll_gap": 0.0,
     }
     count = 0
@@ -137,6 +139,13 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
                 )
             else:
                 fusion_ent = zero
+            if cfg.train.fusion_calibration_weight > 0:
+                fusion_calibration = compute_quality_calibration_loss(
+                    out["modality_weights"], out["stream_quality"], out["stream_available"],
+                    out["memory_mask"],
+                )
+            else:
+                fusion_calibration = zero
             counterfactual = out.get("decoder_counterfactual_loss", zero) if cfg.train.counterfactual_weight > 0 else zero
             cf_nll_gap = out.get("decoder_counterfactual_nll_gap", zero)
             loss = (
@@ -148,6 +157,7 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
                 + cfg.train.plan_diversity_weight * plan_div
                 + cfg.train.plan_order_weight * plan_ord
                 + cfg.train.fusion_entropy_weight * fusion_ent
+                + cfg.train.fusion_calibration_weight * fusion_calibration
                 + cfg.train.counterfactual_weight * counterfactual
             )
         if training:
@@ -169,6 +179,7 @@ def run_epoch(model, loader, tokenizer, cfg, device, optimizer=None, scaler=None
             ("loss", loss), ("translation", translation), ("ctc", ctc), ("ot", ot),
             ("cross_modal", cross_modal), ("fs_spot", fs_spot), ("plan_div", plan_div),
             ("plan_ord", plan_ord), ("fusion_ent", fusion_ent),
+            ("fusion_calibration", fusion_calibration),
             ("counterfactual", counterfactual), ("cf_nll_gap", cf_nll_gap),
         ):
             sums[k] += float(val.detach()) * batch_examples
@@ -318,7 +329,8 @@ def main() -> None:
         "epoch", "visual_lr", "train_loss", "valid_loss", "train_translation",
         "valid_translation", "train_ctc", "train_fs_spot", "train_ot",
         "train_cross_modal", "train_plan_div", "train_plan_ord",
-        "train_fusion_ent", "train_counterfactual", "train_cf_nll_gap", "valid_cf_nll_gap",
+        "train_fusion_ent", "train_fusion_calibration", "train_counterfactual",
+        "train_cf_nll_gap", "valid_cf_nll_gap",
     ]
     log_path = out_dir / "metrics.csv"
     if args.resume and log_path.exists() and log_path.stat().st_size > 0:
@@ -354,6 +366,7 @@ def main() -> None:
                 "train_plan_div": train_metrics["plan_div"],
                 "train_plan_ord": train_metrics["plan_ord"],
                 "train_fusion_ent": train_metrics["fusion_ent"],
+                "train_fusion_calibration": train_metrics["fusion_calibration"],
                 "train_counterfactual": train_metrics["counterfactual"],
                 "train_cf_nll_gap": train_metrics["cf_nll_gap"],
                 "valid_cf_nll_gap": valid_metrics["cf_nll_gap"],

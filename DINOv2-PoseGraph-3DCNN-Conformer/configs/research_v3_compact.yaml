@@ -121,6 +121,7 @@ train:
   plan_diversity_weight: 0.0
   plan_order_weight: 0.0
   fusion_entropy_weight: 0.0
+  fusion_calibration_weight: 0.05
   counterfactual_weight: 0.0
   label_smoothing: 0.0
   seed: 2026

@@ -126,6 +126,37 @@ def compute_fusion_entropy_loss(
     return (1.0 - norm_ent[multi]).clamp(0.0, 1.0).mean()
 
 
+def compute_quality_calibration_loss(
+    weights: torch.Tensor,
+    quality: torch.Tensor,
+    stream_available: torch.Tensor,
+    frame_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Align fusion weights with observed per-stream quality under missing data.
+
+    The target is the normalized mean of the five contract-level quality signals.
+    This makes reliability gating falsifiable: a stream cannot receive high
+    weight while its observable validity/confidence signals are low.
+    """
+    if weights.ndim != 3 or quality.ndim != 4 or stream_available.shape != weights.shape:
+        raise ValueError("weights, quality and stream_available have incompatible shapes")
+    if quality.shape[:3] != weights.shape or quality.shape[-1] < 1:
+        raise ValueError("quality must have shape [B,T,S,Q] matching weights")
+    valid = stream_available.bool()
+    if frame_mask is not None:
+        valid = valid & frame_mask.bool()[..., None]
+    quality_target = quality.float().mean(dim=-1).clamp(0.0, 1.0)
+    quality_target = torch.where(valid, quality_target, torch.zeros_like(quality_target))
+    normalizer = quality_target.sum(dim=-1, keepdim=True)
+    target = quality_target / normalizer.clamp_min(1e-6)
+    usable = valid.any(dim=-1) & (normalizer.squeeze(-1) > 1e-6)
+    if not usable.any():
+        return weights.sum() * 0.0
+    prediction = weights.float().clamp_min(1e-6)
+    divergence = F.kl_div(prediction.log(), target, reduction="none").sum(dim=-1)
+    return divergence[usable].mean()
+
+
 def compute_cross_modal_alignment_loss(
     interactions: torch.Tensor,
     availability: torch.Tensor,
