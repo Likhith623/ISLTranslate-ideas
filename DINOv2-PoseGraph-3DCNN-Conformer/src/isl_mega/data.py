@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import json
 import math
+import os
 
 import numpy as np
 import torch
@@ -215,7 +216,9 @@ class ISLVideoDataset(Dataset):
                         raise ValueError(f"{self.path}:{line_no} fingerspelling_spans intervals must be finite with start <= end")
             fs_known_explicit = row.get("fingerspelling_label_known")
             if fs_known_explicit is not None:
-                fs_known = bool(fs_known_explicit)
+                if not isinstance(fs_known_explicit, bool):
+                    raise ValueError(f"{self.path}:{line_no} field 'fingerspelling_label_known' must be boolean")
+                fs_known = fs_known_explicit
             else:
                 fs_known = (fingerspelling_text is not None) or (fingerspelling_spans is not None)
             self.records.append(ManifestRecord(
@@ -281,7 +284,16 @@ class ISLVideoDataset(Dataset):
             raise ValueError("pose_valid must have shape [Tp,66]")
         if pose_conf_raw.shape != (len(pose_times), 66):
             raise ValueError("pose_confidence must have shape [Tp,66]")
-        pose_valid_raw &= np.isfinite(pose_xy_raw).all(-1)
+        pose_finite = np.isfinite(pose_xy_raw).all(-1)
+        if np.any(pose_valid_raw & ~pose_finite):
+            raise ValueError("pose_xy contains nonfinite coordinates marked as valid")
+        if np.any(pose_valid_raw & ((pose_xy_raw < 0.0) | (pose_xy_raw > 1.0)).any(-1)):
+            raise ValueError("pose_xy coordinates marked valid must be in [0,1]")
+        if not np.isfinite(pose_conf_raw[pose_valid_raw]).all():
+            raise ValueError("pose_confidence contains nonfinite values marked as valid")
+        if np.any((pose_conf_raw[pose_valid_raw] < 0.0) | (pose_conf_raw[pose_valid_raw] > 1.0)):
+            raise ValueError("pose_confidence values marked valid must be in [0,1]")
+        pose_valid_raw &= pose_finite
         pose_xy_raw = np.nan_to_num(pose_xy_raw, nan=0.0, posinf=0.0, neginf=0.0)
         pose_conf_raw = np.nan_to_num(pose_conf_raw, nan=0.0).clip(0, 1)
         pose_xy, pose_conf, pose_valid = align_pose_to_video(
@@ -321,11 +333,16 @@ class ISLVideoDataset(Dataset):
             if boxes_raw.shape != (len(video_times), 4, 4):
                 raise ValueError("boxes must have shape [T,4,4] in face/left/right/body order")
             box_finite = np.isfinite(boxes_raw).all(-1)
+            if box_valid_raw is not None and box_valid_raw.shape != (len(video_times), 4):
+                raise ValueError("box_valid must have shape [T,4]")
+            claimed_valid = box_valid_raw if box_valid_raw is not None else box_finite
+            if np.any(claimed_valid & ~box_finite):
+                raise ValueError("boxes contain nonfinite coordinates marked as valid")
+            if np.any(claimed_valid & ((boxes_raw < 0.0) | (boxes_raw > 1.0)).any(-1)):
+                raise ValueError("box coordinates marked valid must be in [0,1]")
             boxes = transform_boxes_to_letterbox(
                 np.nan_to_num(boxes_raw, nan=0.0, posinf=1.0, neginf=0.0), affine
             )
-            if box_valid_raw is not None and box_valid_raw.shape != (len(video_times), 4):
-                raise ValueError("box_valid must have shape [T,4]")
             positive_area = (boxes[..., 2] > boxes[..., 0]) & (boxes[..., 3] > boxes[..., 1])
             box_valid = (box_valid_raw & box_finite & positive_area) if box_valid_raw is not None else (box_finite & positive_area)
         if box_scores_raw is None:
@@ -353,6 +370,8 @@ class ISLVideoDataset(Dataset):
                 s_t, e_t = float(item[0]), float(item[1])
                 if not (math.isfinite(s_t) and math.isfinite(e_t) and e_t >= s_t):
                     raise ValueError("Each fingerspelling_spans interval must be finite with start <= end")
+                if s_t < 0.0 or e_t > float(rel_times[-1]):
+                    raise ValueError("Each fingerspelling_spans interval must lie within the clip duration")
                 fs_spans |= (rel_times >= s_t) & (rel_times <= e_t)
             fs_span_known = True
         else:
@@ -490,8 +509,14 @@ def write_grouped_splits(records: list[dict], output_dir: str | Path,
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     for split, rows in out.items():
-        (output / f"{split}.jsonl").write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows),
-                                                encoding="utf-8")
+        serialized = []
+        for row in rows:
+            item = dict(row)
+            npz = Path(item["npz"])
+            if npz.is_absolute():
+                item["npz"] = os.path.relpath(npz, output)
+            serialized.append(json.dumps(item, ensure_ascii=False) + "\n")
+        (output / f"{split}.jsonl").write_text("".join(serialized), encoding="utf-8")
     sizes = [len(rows) for rows in groups.values()]
     total_samples = len(records)
     largest_size = max(sizes)

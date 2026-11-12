@@ -102,7 +102,7 @@ data:
   pin_memory: true
   max_target_tokens: 128
   strict_source_disjoint: true
-  require_signer_disjoint: false
+  require_signer_disjoint: true
 
 train:
   epochs: 30

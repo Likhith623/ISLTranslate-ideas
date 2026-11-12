@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from isl_mega.config import load_config
 from isl_mega.data import ISLVideoDataset, collate_examples, validate_split_disjointness
 from isl_mega.model import build_model
-from isl_mega.checkpoint import load_checkpoint
+from isl_mega.checkpoint import config_fingerprint, file_fingerprint, load_checkpoint
 from isl_mega.metrics import translation_metrics
 
 
@@ -77,9 +77,14 @@ def main():
         raise SystemExit("Install `pip install -e '.[text]'` to decode with FLAN-T5") from exc
     tokenizer = AutoTokenizer.from_pretrained(cfg.decoder.tokenizer_name or cfg.decoder.model_name,
                                                local_files_only=cfg.decoder.local_files_only)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     model = build_model(cfg, with_decoder=True).to(device)
-    load_checkpoint(args.checkpoint, model, map_location=device, restore_rng=False)
+    load_checkpoint(args.checkpoint, model, map_location=device, restore_rng=False, expected_config=cfg)
     model.eval(); predictions = []; refs = []; rows = []
     active_plans_total = 0.0
     plan_samples = 0
@@ -118,7 +123,11 @@ def main():
     metrics = translation_metrics(predictions, refs)
     diagnostics = {
         "checkpoint": str(args.checkpoint),
+        "checkpoint_sha256": file_fingerprint(args.checkpoint),
+        "config_sha256": config_fingerprint(cfg),
         "manifest": str(manifest),
+        "manifest_sha256": file_fingerprint(manifest),
+        "device": str(device),
         "num_examples": len(rows),
         "beams": args.beams,
         "mean_active_plan_queries": active_plans_total / max(plan_samples, 1),

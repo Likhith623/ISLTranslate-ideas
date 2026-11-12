@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import random
 import warnings
 from pathlib import Path
@@ -13,7 +14,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from isl_mega.checkpoint import load_checkpoint, save_checkpoint
+from isl_mega.checkpoint import file_fingerprint, load_checkpoint, save_checkpoint
 from isl_mega.config import load_config
 from isl_mega.data import ISLVideoDataset, collate_examples, validate_split_disjointness
 from isl_mega.losses import (
@@ -32,6 +33,15 @@ def seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+
+
+def seed_worker(worker_id: int) -> None:
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def model_inputs(batch: dict, device: torch.device) -> dict:
@@ -205,7 +215,12 @@ def main() -> None:
     except ImportError as exc:
         raise SystemExit("Install `pip install -e '.[text]'` to train with FLAN-T5") from exc
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     if device.type == "cuda" and cfg.train.amp_dtype == "bf16" and not torch.cuda.is_bf16_supported():
         raise SystemExit("bf16 requested but this CUDA device does not support bfloat16; use amp_dtype: fp16")
 
@@ -227,15 +242,17 @@ def main() -> None:
         validate_split_disjointness(split_records, "signer_id", require_signer_disjoint=True)
 
     use_pin_memory = cfg.data.pin_memory and device.type == "cuda"
+    loader_generator = torch.Generator()
+    loader_generator.manual_seed(cfg.train.seed)
     train_loader = DataLoader(
         train_ds, batch_size=cfg.train.batch_size, shuffle=True,
         num_workers=cfg.data.num_workers, pin_memory=use_pin_memory,
-        collate_fn=collate_examples,
+        collate_fn=collate_examples, worker_init_fn=seed_worker, generator=loader_generator,
     )
     valid_loader = DataLoader(
         valid_ds, batch_size=cfg.train.batch_size, shuffle=False,
         num_workers=cfg.data.num_workers, pin_memory=use_pin_memory,
-        collate_fn=collate_examples,
+        collate_fn=collate_examples, worker_init_fn=seed_worker, generator=loader_generator,
     )
     tokenizer = AutoTokenizer.from_pretrained(
         cfg.decoder.tokenizer_name or cfg.decoder.model_name,
@@ -269,18 +286,34 @@ def main() -> None:
 
     start_epoch = 0
     global_step = 0
-    best_valid = float("inf")
+    best_valid_translation = float("inf")
     if args.resume:
-        state = load_checkpoint(args.resume, model, optimizer, scheduler, map_location=device, scaler=scaler)
+        state = load_checkpoint(args.resume, model, optimizer, scheduler, map_location=device,
+                    scaler=scaler, expected_config=cfg)
         start_epoch = int(state["epoch"])
         global_step = int(state.get("step", 0))
-        best_valid = float(state.get("extra", {}).get("best_valid_loss", float("inf")))
+        best_valid_translation = float(
+            state.get("extra", {}).get(
+                "best_valid_translation",
+                state.get("extra", {}).get("best_valid_loss", float("inf")),
+            )
+        )
+        loader_state = state.get("extra", {}).get("train_loader_generator_state")
+        if loader_state is not None:
+            loader_generator.set_state(loader_state)
         if start_epoch >= cfg.train.epochs:
             raise ValueError("Checkpoint epoch is already at or beyond configured total epochs")
 
     out_dir = Path(cfg.train.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg.save_json(out_dir / "resolved_config.json")
+    (out_dir / "manifest_sha256.json").write_text(json.dumps({
+        name: file_fingerprint(path) for name, path in (
+            ("train", cfg.data.train_manifest),
+            ("valid", cfg.data.valid_manifest),
+            ("test", cfg.data.test_manifest),
+        )
+    }, indent=2), encoding="utf-8")
     fieldnames = [
         "epoch", "visual_lr", "train_loss", "valid_loss", "train_translation",
         "valid_translation", "train_ctc", "train_fs_spot", "train_ot",
@@ -328,10 +361,15 @@ def main() -> None:
             writer.writerow(row)
             handle.flush()
             print(row)
-            is_best = valid_metrics["loss"] < best_valid
+            is_best = valid_metrics["translation"] < best_valid_translation
             if is_best:
-                best_valid = valid_metrics["loss"]
-            checkpoint_extra = {"best_valid_loss": best_valid, "valid_loss": valid_metrics["loss"]}
+                best_valid_translation = valid_metrics["translation"]
+            checkpoint_extra = {
+                "best_valid_translation": best_valid_translation,
+                "valid_loss": valid_metrics["loss"],
+                "valid_translation": valid_metrics["translation"],
+                "train_loader_generator_state": loader_generator.get_state(),
+            }
             save_checkpoint(out_dir / "last.pt", model, optimizer, scheduler,
                             epoch + 1, global_step, cfg, extra=checkpoint_extra, scaler=scaler)
             if is_best:

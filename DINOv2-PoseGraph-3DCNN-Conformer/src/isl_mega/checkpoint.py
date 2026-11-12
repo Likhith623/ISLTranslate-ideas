@@ -5,8 +5,26 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import random
+import hashlib
+import json
 import numpy as np
 import torch
+
+
+def config_fingerprint(config) -> str | None:
+    if config is None:
+        return None
+    payload = config.to_dict() if hasattr(config, "to_dict") else config
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def file_fingerprint(path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def save_checkpoint(path, model, optimizer=None, scheduler=None, epoch=0, step=0, config=None, extra=None,
@@ -19,6 +37,7 @@ def save_checkpoint(path, model, optimizer=None, scheduler=None, epoch=0, step=0
         "torch_rng": torch.get_rng_state(),
         "cuda_rng": [s.cpu() for s in torch.cuda.get_rng_state_all()] if torch.cuda.is_available() else None,
         "config": config.to_dict() if hasattr(config, "to_dict") else config,
+        "provenance": {"config_sha256": config_fingerprint(config)},
         "extra": extra or {},
     }
     if optimizer is not None:
@@ -38,10 +57,17 @@ def save_checkpoint(path, model, optimizer=None, scheduler=None, epoch=0, step=0
 
 
 def load_checkpoint(path, model, optimizer=None, scheduler=None, map_location="cpu", strict=True,
-                    restore_rng: bool = True, scaler=None):
+                    restore_rng: bool = True, scaler=None, expected_config=None):
     state = torch.load(path, map_location=map_location, weights_only=False)
     if "model" not in state:
         raise ValueError("Checkpoint does not contain a 'model' state_dict")
+    if expected_config is not None:
+        expected_hash = config_fingerprint(expected_config)
+        stored_hash = state.get("provenance", {}).get("config_sha256")
+        if stored_hash is None:
+            stored_hash = config_fingerprint(state.get("config"))
+        if stored_hash != expected_hash:
+            raise ValueError("Checkpoint configuration does not match the active configuration")
     model.load_state_dict(state["model"], strict=strict)
     if optimizer is not None and "optimizer" in state:
         optimizer.load_state_dict(state["optimizer"])

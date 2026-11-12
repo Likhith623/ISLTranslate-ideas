@@ -11,7 +11,7 @@ import torch
 
 from isl_mega.checkpoint import load_checkpoint, save_checkpoint
 from isl_mega.config import load_config
-from isl_mega.data import ISLVideoDataset, validate_split_disjointness
+from isl_mega.data import ISLVideoDataset, validate_split_disjointness, write_grouped_splits
 from isl_mega.decoder import T5VisualDecoder
 from isl_mega.losses import compute_ctc_batch
 from isl_mega.model import ISLMEGA
@@ -398,9 +398,59 @@ def test_pretrain_visual_reports_crop_weighted_epoch_loss(tmp_path, monkeypatch,
     monkeypatch.setattr(
         "sys.argv",
         ["pretrain_visual.py", "--config", str(cfg_path), "--manifest", str(manifest),
-         "--out", str(out_ckpt), "--epochs", "1", "--batch-size", "1"],
+         "--out", str(out_ckpt), "--epochs", "1", "--batch-size", "1",
+         "--allow-external-manifest"],
     )
     pretrain_mod.main()
     captured = capsys.readouterr().out
     assert "crops=" in captured
     assert out_ckpt.exists()
+
+
+def test_dataset_rejects_invalid_valid_annotations_and_non_boolean_provenance(tmp_path):
+    ts = np.arange(2, dtype=np.float64) / 25.0
+    npz_path = tmp_path / "bad.npz"
+    pose_xy = np.full((2, 66, 2), 0.5, dtype=np.float32)
+    pose_xy[0, 0, 0] = 1.5
+    np.savez_compressed(
+        npz_path,
+        frames=np.zeros((2, 8, 8, 3), dtype=np.uint8),
+        video_timestamps=ts,
+        pose_xy=pose_xy,
+        pose_timestamps=ts,
+        pose_valid=np.ones((2, 66), dtype=bool),
+    )
+    manifest = tmp_path / "bad.jsonl"
+    manifest.write_text(json.dumps({
+        "uid": "bad", "npz": str(npz_path), "translation": "x", "source_id": "s",
+        "fingerspelling_label_known": "false",
+    }) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="must be boolean"):
+        ISLVideoDataset(manifest, crop_size=8, image_size=8)
+
+    manifest.write_text(json.dumps({
+        "uid": "bad", "npz": str(npz_path), "translation": "x", "source_id": "s",
+        "fingerspelling_label_known": False,
+    }) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"must be in \[0,1\]"):
+        ISLVideoDataset(manifest, crop_size=8, image_size=8)[0]
+
+
+def test_grouped_split_manifests_use_relocatable_npz_paths(tmp_path):
+    rows = []
+    for index in range(3):
+        npz_path = tmp_path / f"sample_{index}.npz"
+        np.savez_compressed(
+            npz_path,
+            frames=np.zeros((1, 8, 8, 3), dtype=np.uint8),
+            video_timestamps=np.array([0.0]),
+            pose_xy=np.full((1, 66, 2), 0.5, dtype=np.float32),
+            pose_timestamps=np.array([0.0]),
+        )
+        rows.append({"uid": f"u{index}", "npz": str(npz_path), "source_id": f"source_{index}"})
+    output = tmp_path / "manifests"
+    write_grouped_splits(rows, output, seed=7)
+    for split in ("train", "valid", "test"):
+        row = json.loads((output / f"{split}.jsonl").read_text(encoding="utf-8").splitlines()[0])
+        assert not Path(row["npz"]).is_absolute()
+        assert (output / row["npz"]).exists()
