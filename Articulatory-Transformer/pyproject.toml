@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "articulatory-transformer"
+version = "1.0.0"
+description = "Articulatory-Bound Spatiotemporal Transformer (AB-ST) for Continuous Sign Language Translation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Sign Language AI Research Team"}
+]
+keywords = [
+    "sign-language-translation",
+    "continuous-slt",
+    "isl",
+    "transformer",
+    "conformer",
+    "articulatory-phonology",
+    "dinov2",
+    "q-former"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+torch = [
+    "torch>=2.1.0",
+    "torchvision>=0.16.0",
+    "transformers>=4.38.0",
+    "einops>=0.7.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
