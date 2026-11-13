@@ -1,0 +1,36 @@
+{
+  "device": "cpu",
+  "threads": 1,
+  "repetitions": 10,
+  "cases": [
+    {
+      "dimensions": 16,
+      "batch": 2,
+      "cells": 32,
+      "cayley_median_ms": 0.07745798211544752,
+      "cayley_norm_max_error": 4.76837158203125e-07,
+      "givens_median_ms": 0.11210399679839611,
+      "givens_norm_max_error": 4.76837158203125e-07
+    },
+    {
+      "dimensions": 64,
+      "batch": 2,
+      "cells": 32,
+      "cayley_median_ms": 0.7254994998220354,
+      "cayley_norm_max_error": 9.5367431640625e-07,
+      "givens_median_ms": 0.23672898532822728,
+      "givens_norm_max_error": 9.5367431640625e-07
+    },
+    {
+      "dimensions": 128,
+      "batch": 2,
+      "cells": 32,
+      "cayley_median_ms": 3.0132500105537474,
+      "cayley_norm_max_error": 1.9073486328125e-06,
+      "givens_median_ms": 0.6186869868542999,
+      "givens_norm_max_error": 9.5367431640625e-07
+    }
+  ],
+  "third_order_neumann_orthogonality_error": 0.12109375,
+  "scope": "Actions on vectors; different orthogonal maps, not equivalent outputs. CPU timings do not establish CUDA/MPS latency."
+}

@@ -1,0 +1,21 @@
+{
+  "scope": "CPU integrator forward only; excludes Cayley solves, decoder, backward and data I/O",
+  "batch": 2,
+  "frames": 512,
+  "dimensions": 16,
+  "scales": [
+    1,
+    4,
+    16,
+    32
+  ],
+  "repeats": 10,
+  "threads": 1,
+  "prefix_median_ms": 1.5765624993946403,
+  "clipped_median_ms": 5.556333984714001,
+  "speedup_on_this_case": 3.5243347389320063,
+  "float32_area_max_abs_difference": 0.001102447509765625,
+  "float64_area_max_abs_difference": 2.376765451117535e-12,
+  "prefix_float64_median_ms": 1.796271011698991,
+  "clipped_float64_median_ms": 5.789813003502786
+}

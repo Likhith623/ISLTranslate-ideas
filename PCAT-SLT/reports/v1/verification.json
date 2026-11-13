@@ -1,0 +1,24 @@
+{
+  "date": "2026-11-13",
+  "python": "3.12.14",
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "torch": "2.15.0",
+  "device": "cpu",
+  "tests_passed": 43,
+  "lint": "ruff check .: passed",
+  "parameter_counts": {
+    "base": {
+      "parameters": 6111297,
+      "trainable": 6111297
+    },
+    "smoke": {
+      "parameters": 41057,
+      "trainable": 41057
+    }
+  },
+  "real_slt_corpus_trained": false,
+  "cuda_tested": false,
+  "test_command": "python -m pytest -q",
+  "synthetic_test_examples": 6,
+  "synthetic_exact_match_percent": 100.0
+}

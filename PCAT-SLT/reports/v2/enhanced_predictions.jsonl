@@ -1,0 +1,6 @@
+{"id": "test_00000", "reference": "hf", "hypothesis": "hf", "ended_with_eos": true}
+{"id": "test_00001", "reference": "fh", "hypothesis": "fh", "ended_with_eos": true}
+{"id": "test_00002", "reference": "hf", "hypothesis": "hf", "ended_with_eos": true}
+{"id": "test_00003", "reference": "fh", "hypothesis": "fh", "ended_with_eos": true}
+{"id": "test_00004", "reference": "hf", "hypothesis": "hf", "ended_with_eos": true}
+{"id": "test_00005", "reference": "fh", "hypothesis": "fh", "ended_with_eos": true}

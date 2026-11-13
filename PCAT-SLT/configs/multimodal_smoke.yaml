@@ -1,0 +1,46 @@
+model:
+  rank: 2
+  bins: 8
+  progress_scales:
+  - 1
+  - 8
+  progress_augmentation: true
+  width: 288
+  heads: 4
+  encoder_layers: 1
+  decoder_layers: 1
+  ff_multiplier: 1
+  dropout: 0.0
+  max_target_length: 16
+  detail_memory: true
+  detail_position_dim: 16
+  timing: true
+  body_frame: dual
+  transport: givens
+  integration_precision: float32
+  area_sketch_dim: 4
+  area_sketch_heads: 2
+  adaptive_step: 1.0
+  adaptive_min_bins: 2
+  local_clocks: true
+  local_bins: 2
+  visual_backend: cnn
+  visual_dim: 16
+  visual_grid: 4
+  visual_memory_norm: true
+  visual_chunk_size: 64
+data:
+  train: data/visual_demo/train.jsonl
+  val: data/visual_demo/val.jsonl
+  test: data/visual_demo/test.jsonl
+  batch_size: 8
+  max_frames: 64
+  max_bytes: 14
+train:
+  epochs: 40
+  lr: 0.001
+  weight_decay: 0.0
+  label_smoothing: 0.0
+  warmup_steps: 0
+  device: cpu
+  output_dir: runs/v3_visual_final

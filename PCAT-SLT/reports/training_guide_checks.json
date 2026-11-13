@@ -1,0 +1,40 @@
+{
+  "checked_date": "2026-11-14",
+  "profiles": {
+    "kaggle_pose": {
+      "schema": "passed",
+      "cuda_device": "cuda",
+      "amp": true,
+      "batch_size": 1,
+      "accumulation": 8,
+      "cpu_forward_backward": "passed",
+      "logits_shape": [
+        1,
+        3,
+        259
+      ],
+      "pretrained_assets": "none"
+    },
+    "kaggle_visual": {
+      "schema": "passed",
+      "cuda_device": "cuda",
+      "amp": true,
+      "batch_size": 1,
+      "accumulation": 8,
+      "cpu_forward_backward": "passed",
+      "logits_shape": [
+        1,
+        3,
+        5
+      ],
+      "pretrained_assets": "tiny local random fixtures"
+    }
+  },
+  "markdown_python_syntax": "passed",
+  "local_links": "passed",
+  "cuda_benchmarked": false,
+  "note": "CPU smoke validates profile mechanisms; visual smoke substitutes tiny local random T5/DINO fixtures, not real pretrained models. No real dataset training.",
+  "regression_tests": "111 passed, 1 skipped (MPS unavailable)",
+  "lint": "passed",
+  "sources_checked_date": "2026-11-14"
+}

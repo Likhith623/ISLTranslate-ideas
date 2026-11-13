@@ -1,0 +1,33 @@
+model:
+  rank: 2
+  bins: 4
+  progress_scales: [1, 2, 4]
+  progress_augmentation: true
+  detail_memory: true
+  detail_position_dim: 16
+  metric_condition_limit: 16.0
+  integration_precision: float64
+  anchor_policy: first_reliable
+  width: 288
+  heads: 4
+  encoder_layers: 1
+  decoder_layers: 1
+  ff_multiplier: 1
+  dropout: 0.0
+  timing: true
+  max_target_length: 16
+data:
+  train: data/demo/train.jsonl
+  val: data/demo/val.jsonl
+  test: data/demo/test.jsonl
+  batch_size: 8
+  max_frames: 64
+  max_bytes: 14
+train:
+  epochs: 12
+  lr: 0.0005
+  weight_decay: 0.0
+  label_smoothing: 0.0
+  warmup_steps: 0
+  device: cpu
+  output_dir: runs/enhanced_smoke_v2

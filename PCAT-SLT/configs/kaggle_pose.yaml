@@ -1,0 +1,47 @@
+# Unbenchmarked CUDA starting profile. See TRAINING_AND_DATASETS.md.
+model:
+  rank: 8
+  bins: 64
+  progress_scales:
+  - 1
+  - 64
+  progress_augmentation: true
+  width: 320
+  heads: 8
+  encoder_layers: 2
+  decoder_layers: 4
+  max_target_length: 256
+  detail_memory: true
+  detail_position_dim: 32
+  timing: true
+  body_frame: dual
+  body_time_constant: 0.25
+  depth_policy: ignore
+  transport: givens
+  integration: prefix
+  integration_precision: float32
+  area_sketch_dim: 16
+  area_sketch_heads: 2
+  adaptive_step: 2.0
+  adaptive_min_bins: 8
+  local_clocks: true
+  local_bins: 8
+  visual_backend: none
+  text_backend: byte
+data:
+  train: data/real/train.jsonl
+  val: data/real/val.jsonl
+  test: data/real/test.jsonl
+  batch_size: 1
+  max_frames: 400
+  max_bytes: 254
+  workers: 0
+train:
+  epochs: 40
+  lr: 0.0003
+  accumulation: 8
+  warmup_steps: 100
+  device: cuda
+  output_dir: runs/kaggle_pose
+  amp: true
+  seed: 17

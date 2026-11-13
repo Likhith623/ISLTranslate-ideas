@@ -1,0 +1,35 @@
+{
+  "train": {
+    "samples": 24,
+    "frames_min": 9,
+    "frames_max": 22,
+    "missing_joint_observations": 0,
+    "known_signers": 24,
+    "anchor_fallback_samples": 0,
+    "known_source_videos": 0
+  },
+  "val": {
+    "samples": 6,
+    "frames_min": 10,
+    "frames_max": 20,
+    "missing_joint_observations": 0,
+    "known_signers": 6,
+    "anchor_fallback_samples": 0,
+    "known_source_videos": 0
+  },
+  "test": {
+    "samples": 6,
+    "frames_min": 10,
+    "frames_max": 18,
+    "missing_joint_observations": 0,
+    "known_signers": 6,
+    "anchor_fallback_samples": 0,
+    "known_source_videos": 0
+  },
+  "signer_overlap": {
+    "train/val": [],
+    "train/test": [],
+    "val/test": []
+  },
+  "content_hash_scope": "exact decoded arrays; near-duplicate and source-video leakage require provenance review"
+}

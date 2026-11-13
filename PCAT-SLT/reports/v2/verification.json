@@ -1,0 +1,49 @@
+{
+  "version": "0.2.0",
+  "date": "2026-11-13",
+  "python": "3.12.14",
+  "torch": "2.15.0",
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "tested_device": "cpu",
+  "tests_passed": 86,
+  "lint": "passed",
+  "parameter_counts": {
+    "base": {
+      "parameters": 9596417,
+      "trainable": 9596417,
+      "coarse_tokens": 53,
+      "detail_memory": true,
+      "integration_precision": "float64"
+    },
+    "invariant": {
+      "parameters": 6235265,
+      "trainable": 6235265,
+      "coarse_tokens": 53,
+      "detail_memory": false,
+      "integration_precision": "float64"
+    },
+    "enhanced_smoke": {
+      "parameters": 1511969,
+      "trainable": 1511969,
+      "coarse_tokens": 7,
+      "detail_memory": true,
+      "integration_precision": "float64"
+    },
+    "smoke": {
+      "parameters": 41057,
+      "trainable": 41057,
+      "coarse_tokens": 4,
+      "detail_memory": false,
+      "integration_precision": "float32"
+    }
+  },
+  "synthetic_examples": {
+    "train": 24,
+    "val": 6,
+    "test": 6
+  },
+  "synthetic_exact_match_percent": 100.0,
+  "invalid_utf8_fraction": 0.0,
+  "real_slt_benchmarks_run": false,
+  "cuda_tested": false
+}

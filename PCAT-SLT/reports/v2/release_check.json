@@ -1,0 +1,9 @@
+{
+  "version": "0.2.0",
+  "archive_integrity": "passed",
+  "source_hashes_verified": 61,
+  "extracted_source_tests": "86 passed",
+  "extracted_source_lint": "passed",
+  "wheel_build": "passed",
+  "note": "Release-check metadata is added after verification; implementation/config/test sources remain identical."
+}

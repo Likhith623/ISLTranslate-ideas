@@ -1,0 +1,21 @@
+{
+  "version": "0.3.0",
+  "archive_integrity": "passed",
+  "file_hashes_verified": 91,
+  "extracted_tests": "111 passed, 1 skipped (MPS unavailable)",
+  "extracted_lint": "passed",
+  "wheel_build": "passed",
+  "network_mode": "HF_HUB_OFFLINE=1 during extracted verification",
+  "note": "Original extracted-release checks above describe the initial v0.3 archive. Training-guide addendum adds documentation, two validated configs and check metadata; model/trainer implementation unchanged. See training_guide_checks.json for CPU-only profile checks.",
+  "training_guide_addendum": {
+    "checked_date": "2026-11-14",
+    "guide": "TRAINING_AND_DATASETS.md",
+    "configs": [
+      "configs/kaggle_pose.yaml",
+      "configs/kaggle_visual.yaml"
+    ],
+    "checks": "reports/training_guide_checks.json",
+    "current_source_tests": "111 passed, 1 skipped (MPS unavailable)",
+    "current_lint": "passed"
+  }
+}

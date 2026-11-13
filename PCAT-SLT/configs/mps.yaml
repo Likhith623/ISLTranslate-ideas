@@ -1,0 +1,20 @@
+model:
+  width: 32
+  heads: 4
+  rank: 2
+  bins: 4
+  transport: givens
+  integration_precision: float32
+  encoder_layers: 1
+  decoder_layers: 1
+  max_target_length: 16
+data:
+  train: data/demo/train.jsonl
+  val: data/demo/val.jsonl
+  test: data/demo/test.jsonl
+  max_frames: 64
+  max_bytes: 14
+train:
+  epochs: 8
+  device: mps
+  output_dir: runs/mps_smoke

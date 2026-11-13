@@ -1,0 +1,45 @@
+model:
+  joints: 66
+  anchors: [0, 1, 2]
+  rank: 8
+  bins: 32
+  progress_scales: [1, 4, 16, 32]
+  progress_augmentation: true
+  detail_memory: true
+  detail_position_dim: 32
+  metric_condition_limit: 16.0
+  integration: prefix
+  integration_precision: float64
+  width: 320
+  heads: 8
+  encoder_layers: 2
+  decoder_layers: 4
+  ff_multiplier: 4
+  dropout: 0.1
+  max_target_length: 512
+  operator: pcat
+  clock: learned
+  timing: true
+  metric_floor: 0.05
+  anchor_min_confidence: 0.5
+data:
+  train: data/train.jsonl
+  val: data/val.jsonl
+  test: data/test.jsonl
+  batch_size: 8
+  workers: 0
+  max_frames: 1500
+  max_bytes: 510
+train:
+  epochs: 50
+  lr: 0.0003
+  weight_decay: 0.01
+  grad_clip: 1.0
+  label_smoothing: 0.1
+  accumulation: 1
+  warmup_steps: 100
+  seed: 17
+  device: auto
+  amp: false
+  deterministic: true
+  output_dir: runs/pcat_v2

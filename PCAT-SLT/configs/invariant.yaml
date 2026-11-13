@@ -1,0 +1,27 @@
+model:
+  rank: 8
+  bins: 32
+  progress_scales: [1, 4, 16, 32]
+  progress_augmentation: true
+  integration: prefix
+  integration_precision: float64
+  detail_memory: false
+  width: 256
+  heads: 8
+  encoder_layers: 2
+  decoder_layers: 4
+  timing: false
+  anchor_policy: first
+  max_target_length: 512
+data:
+  train: data/train.jsonl
+  val: data/val.jsonl
+  test: data/test.jsonl
+  batch_size: 8
+  max_frames: 1500
+  max_bytes: 510
+train:
+  epochs: 50
+  lr: 0.0003
+  device: auto
+  output_dir: runs/pcat_invariant

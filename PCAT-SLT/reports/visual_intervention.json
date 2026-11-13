@@ -1,0 +1,44 @@
+{
+  "samples": 6,
+  "observed_exact_match": 1.0,
+  "masked_exact_match": 0.5,
+  "rows": [
+    {
+      "id": "test_00000",
+      "reference": "a",
+      "observed": "a",
+      "masked": "b"
+    },
+    {
+      "id": "test_00001",
+      "reference": "b",
+      "observed": "b",
+      "masked": "b"
+    },
+    {
+      "id": "test_00002",
+      "reference": "a",
+      "observed": "a",
+      "masked": "b"
+    },
+    {
+      "id": "test_00003",
+      "reference": "b",
+      "observed": "b",
+      "masked": "b"
+    },
+    {
+      "id": "test_00004",
+      "reference": "a",
+      "observed": "a",
+      "masked": "b"
+    },
+    {
+      "id": "test_00005",
+      "reference": "b",
+      "observed": "b",
+      "masked": "b"
+    }
+  ],
+  "interpretation": "Within-checkpoint observation ablation; not an official SLT score or linguistic grounding proof."
+}

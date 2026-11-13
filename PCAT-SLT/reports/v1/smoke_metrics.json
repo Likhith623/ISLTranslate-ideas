@@ -1,0 +1,23 @@
+{
+  "samples": 6,
+  "signatures": {
+    "bleu1": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.6.0",
+    "bleu2": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.6.0",
+    "bleu3": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.6.0",
+    "bleu4": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.6.0",
+    "chrf++": "nrefs:1|case:mixed|eff:yes|nc:6|nw:2|space:no|version:2.6.0"
+  },
+  "bleu1": 49.99999999999999,
+  "bleu2": 0.0,
+  "bleu3": 0.0,
+  "bleu4": 0.0,
+  "chrf++": 66.66666666666666,
+  "rouge_l_f1": 50.0,
+  "exact_match": 50.0,
+  "rouge_definition": "macro whitespace-token LCS F1, beta=1, case-sensitive, no stemming",
+  "checkpoint_sha256": "00a929fa710f1654796e97e75ae4f9b1f33bf44e39656784455d971705b360b1",
+  "manifest_sha256": "b97442e7f51834834129ebd9925b567c824fb91ba18e5c1bd7797d0bb0f56588",
+  "generation": "greedy UTF-8 bytes",
+  "max_new_tokens": 8,
+  "eos_fraction": 1.0
+}

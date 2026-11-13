@@ -1,0 +1,31 @@
+model:
+  rank: 2
+  bins: 4
+  width: 32
+  heads: 4
+  encoder_layers: 1
+  decoder_layers: 1
+  ff_multiplier: 2
+  dropout: 0.0
+  max_target_length: 16
+data:
+  train: data/demo/train.jsonl
+  val: data/demo/val.jsonl
+  test: data/demo/test.jsonl
+  batch_size: 8
+  workers: 0
+  max_frames: 64
+  max_bytes: 14
+train:
+  epochs: 8
+  lr: 0.003
+  weight_decay: 0.0
+  label_smoothing: 0.0
+  grad_clip: 1.0
+  accumulation: 1
+  warmup_steps: 0
+  seed: 17
+  device: cpu
+  amp: false
+  deterministic: true
+  output_dir: runs/v2_smoke

@@ -1,0 +1,52 @@
+{
+  "version": "0.3.0",
+  "date": "2026-11-14",
+  "python": "3.12.14",
+  "torch": "2.15.0",
+  "transformers": "4.57.6",
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "tests_passed": 111,
+  "hardware_tests_skipped": {
+    "mps": true
+  },
+  "cuda_tested": false,
+  "lint": "passed",
+  "parameter_counts": {
+    "multimodal_smoke": {
+      "parameters": 1592707,
+      "trainable": 1592707,
+      "global_max_tokens": 18,
+      "text_backend": "byte",
+      "visual_backend": "cnn"
+    },
+    "base": {
+      "parameters": 9596417,
+      "trainable": 9596417,
+      "global_max_tokens": 53,
+      "text_backend": "byte",
+      "visual_backend": "none"
+    },
+    "invariant": {
+      "parameters": 6235265,
+      "trainable": 6235265,
+      "global_max_tokens": 53,
+      "text_backend": "byte",
+      "visual_backend": "none"
+    },
+    "mps": {
+      "parameters": 49377,
+      "trainable": 49377,
+      "global_max_tokens": 4,
+      "text_backend": "byte",
+      "visual_backend": "none"
+    }
+  },
+  "real_slt_benchmarks_run": false,
+  "large_pretrained_models_finetuned": false,
+  "pretrained_adapter_evidence": "local T5/DINO fixture loading, gradients, generation, portable reload; T5 offline exact epoch-resume comparison",
+  "synthetic_pixel_examples": {
+    "train": 24,
+    "val": 6,
+    "test": 6
+  }
+}

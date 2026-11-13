@@ -1,0 +1,12 @@
+{
+  "dtype": "float64",
+  "seed": 17,
+  "subdivision_max_abs_token_error": 2.609024107869118e-15,
+  "orthogonality_max_abs_error": 4.440892098500626e-16,
+  "max_solve_condition_number": 1.0312216324216876,
+  "reversal_max_abs_error": 1.1102230246251565e-16,
+  "nonlinguistic_order_accuracy": 1.0,
+  "nonlinguistic_order_samples": 200,
+  "first_order_paired_feature_distance": 0.0,
+  "interpretation": "Constructed event-order task and algebraic checks; no natural-language benchmark evidence."
+}
