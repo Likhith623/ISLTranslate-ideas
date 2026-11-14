@@ -1,6 +1,6 @@
 {
   "checked_date": "2026-11-14",
-  "notebook_sha256": "430022a4d90239bbdbebe62282ab3d5294aa57ef30ec79921e60932800a1f4b3",
+  "notebook_sha256": "ddd17ef7c617ad347e98a233b38014bc21453e7aa82c93b8a8e49f52c3627bbf",
   "python_syntax": "passed",
   "local_doc_links": "passed",
   "source_zip_bootstrap_and_hashes": "passed",
@@ -52,5 +52,8 @@
     "pose": "passed: synthetic prepared manifests retain absolute input paths/metadata and load expected arrays; repeated setup is stable",
     "visual": "passed: synthetic prepared manifests retain absolute input paths/metadata and load expected arrays; repeated setup is stable"
   },
-  "lint": "passed"
+  "lint": "passed",
+  "executed_notebook_sha256": "430022a4d90239bbdbebe62282ab3d5294aa57ef30ec79921e60932800a1f4b3",
+  "code_cells_sha256": "fdbf4018628dc0bddd43f4090ecd661c5c5d4348c87203462308bc739949794b",
+  "documentation_cleanup": "Only notebook Markdown references changed during consolidation; code-cell hashes unchanged from the executed diagnostic."
 }

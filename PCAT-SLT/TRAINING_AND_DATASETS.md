@@ -2,7 +2,7 @@
 
 Research checked **14 November 2026**, using provider pages, original papers and the current PCAT-SLT v0.3 source. Linked sources establish external facts; proposed experiments and hardware choices are engineering recommendations. Release contents, access terms and platform allocations can change.
 
-**Start here:** [expanded dataset catalog](docs/DATASET_CATALOG.md) lists translation, already-extracted pose, isolated-sign, spelling and auxiliary resources with source/access/conversion details. [Kaggle walkthrough](docs/KAGGLE_RUNBOOK.md) gives accelerator selection, setup, first run, output saving, fresh-session resume and troubleshooting. Import [the companion notebook](notebooks/Kaggle_PCAT_SLT.ipynb) for the executable diagnostic/prepared-data routes. Third-party datasets are linked, not redistributed in this source folder.
+Dataset descriptions and budgets live in this file. Follow [the Kaggle walkthrough](docs/KAGGLE_RUNBOOK.md) for accelerator selection and executable setup/save/resume instructions, [data preparation](docs/DATA.md) for arrays/crops/importers, and [the experiment plan](docs/EXPERIMENTS.md) for comparisons and initial hyperparameters. The [notebook](notebooks/Kaggle_PCAT_SLT.ipynb) implements the walkthrough. Third-party datasets are linked with access instructions, not redistributed here.
 
 ## 1. Recommended path
 
@@ -12,118 +12,162 @@ You do not need every dataset in this guide. A sensible initial study is PHOENIX
 
 No real-corpus training or CUDA benchmark was performed for this guide. The local host has no available CUDA GPU. Software tests and toy-task accuracy do not establish real SLT quality, convergence time or publication readiness. Runtime tables below are **conditional calculations**, not measured T4/A100 speeds.
 
-| Goal | Dataset | Location | Evidence obtained |
-|---|---|---|---|
-| Installation, gradients, generation, resume | Included synthetic pose/pixel diagnostics | CPU, then CUDA smoke test | Software operation only |
-| Test the temporal primitive | PHOENIX-2014T official splits | Kaggle, initially pose-only | Controlled narrow-domain SLT comparison |
-| ISL → English | iSign; WSLP SLT held-out evaluation when accessible | Approved institutional CUDA machine preferred for full data | Language-specific learning and source generalization |
-| Broader architectural evidence | Add CSL-Daily and/or How2Sign | One larger-memory CUDA GPU | Separately trained cross-corpus comparisons |
-| Large-scale pretraining | BOBSL / OpenASL / YouTube-ASL or SL-25, as appropriate | Approved server/cloud with substantial storage | A separate, larger research stage |
+## 2. Datasets
 
-## 2. Main datasets and priorities
+This is the single dataset catalog for the project. It covers relevant translation, pose, recognition, spelling and auxiliary resources; it is not an exhaustive list of every corpus worldwide. Sizes/counts are source-reported, not locally verified downloads.
 
-Counts refer to the cited release, before conversion/exclusion. Record the actual release, usable counts and assignment files: a dataset name alone does not define an experiment.
-
-| Dataset | Signing → text | Published size / splits | Role |
-|---|---|---|---|
-| **PHOENIX-2014T** | DGS → German | **7,096 train / 519 dev / 642 test** | First full continuous-translation benchmark |
-| **iSign** | ISL → English | Original paper: **118,228** sentence/phrase pairs, about **252 h**; describes an 80/10/10 translation split | Main ISL resource; version/source grouping must be explicit |
-| **ISLTranslate** | ISL → English | About **31k** sentence/phrase pairs in the 2023 paper | Legacy comparison or smaller development resource; audit iSign overlap |
-| **CSL-Daily** | Chinese Sign Language → Chinese | **18,401 / 1,077 / 1,176**, about 23 h total | Strong second conventional benchmark, subject to access |
-| **How2Sign** | ASL → English | Original green-screen split: **31,128 / 1,741 / 2,322** clips, 79.12 h; separate approximately 3 h Panoptic subset | Broader translation and limited multiview analysis |
-| **WSLP 2025/2026 SLT** | ISL → English | Public/iSign training resources and task-specific held-out evaluation | External ISL protocol; obtain the exact translation release |
-| **ISH-NEWS (2026)** | ISL → English | Paper reports **4,222** sentence clips | Optional small additional-domain experiment after overlap audit |
-
-Count sources: [PHOENIX/CSL-Daily original experiment tables](https://openaccess.thecvf.com/content/CVPR2021/papers/Zhou_Improving_Sign_Language_Translation_With_Monolingual_Data_by_Sign_Back-Translation_CVPR_2021_paper.pdf), [iSign paper](https://arxiv.org/html/2407.05404v1), [ISLTranslate paper](https://aclanthology.org/2023.findings-acl.665/), [How2Sign paper, Table 2](https://openaccess.thecvf.com/content/CVPR2021/papers/Duarte_How2Sign_A_Large-Scale_Multimodal_Dataset_for_Continuous_American_Sign_Language_CVPR_2021_paper.pdf), [WSLP tasks](https://exploration-lab.github.io/WSLP/task/), [ISH-NEWS paper](https://www.nature.com/articles/s41598-026-60893-0).
-
-### PHOENIX-2014T: first full experiment
-
-Use the [RWTH provider page](https://www-i6.informatik.rwth-aachen.de/~koller/RWTH-PHOENIX-2014-T/). It supplies parallel video, gloss and written translations. Select the **T** translation corpus, not a recognition-only PHOENIX release. The [provider file index](https://www-i6.informatik.rwth-aachen.de/ftp/pub/rwth-phoenix/2016/) lists `phoenix-2014-T.v3.tar.gz` at **39G**; extraction and preprocessing need additional space.
-
-Preserve official splits and written `translation` targets. Glosses are not the translation target. Its weather domain is useful for controlled comparisons but cannot establish conversational ISL performance. Observe provider terms and attribution before any hosted dataset copy.
-
-**Code:** annotation importer implemented; landmarks and aligned visual crops still need preparation. See [REAL_DATA.md](docs/REAL_DATA.md).
-
-### iSign: main ISL resource, with important access conditions
-
-Use the [authors' project](https://exploration-lab.github.io/iSign/) and [current dataset card](https://huggingface.co/datasets/Exploration-Lab/iSign/blob/main/README.md). The card describes v1.1, `.pose` observations in `pose-format`, and `iSign_v1.1.csv`. It recommends splitting by `video_id`: all `[video_id]-[sequence_number]` segments stay together. The original paper's ratio is not an exact current assignment file. Do not infer official v1.1 train/dev/test counts from the older headline total.
-
-The card lists **CC-BY-NC-SA-4.0** and additionally asks users to agree to research-only use and no further sharing/uploading. **A private Kaggle upload is not automatically permitted.** Establish that the provider permits the intended hosted processing before transferring restricted files or derivatives. An approved institutional machine avoids assuming that permission.
-
-The paper describes caption/automatic-transcription noise in parts of the data. Audit target boundaries and tracker failures, and source IDs across pretraining and evaluation.
-
-**Code:** no dedicated iSign `.pose` converter exists. Convert units, layout, timestamps and confidence to [the NPZ contract](docs/DATA.md). A normalized `uid,text` CSV with explicit split map can use the ISLTranslate-schema importer; this is schema reuse, not a claim that the corpora are identical.
-
-### ISLTranslate: establish overlap before combining
-
-The [2023 paper](https://aclanthology.org/2023.findings-acl.665/) reports about 31k pairs. The [authors' repository](https://github.com/Exploration-Lab/ISLTranslate) provides the original `uid,text` CSV and describes MediaPipe archives. Its current download link points to iSign. Verify which release you obtained and compare clip IDs, source videos and time intervals before combining them. Never pretrain on a test recording through a second corpus.
-
-**Code:** annotation import exists and requires an explicit split map. Raw MediaPipe ordering is not the default 66-joint layout. A verified source-ID prefix is a useful leakage group, but does not establish signer identity.
-
-### CSL-Daily: secondary benchmark and Chinese scoring
-
-The [official access page](https://ustc-slr.github.io/datasets/2021_csl_daily/) releases data to universities/research institutes for research and requires a full-time staff member's signature; a student signature alone is insufficient. Check download size and hosted-processing terms against your granted release. Do not rely on unverified mirrors.
-
-**Code:** the documented annotation schemas have an importer; observations need conversion. Choose an appropriate Chinese-capable T5-family decoder, for example an mT5 variant, or evaluate the byte baseline explicitly. Check target tokenization first. Changing the decoder/dataset is a new experiment, not exact resume from English FLAN-T5 training.
-
-**Metric caveat:** current `metrics.py` uses SacreBLEU `13a` and whitespace-token ROUGE-L. These are not automatically comparable to Chinese character-tokenized benchmark results. Export predictions and use the benchmark's documented Chinese normalization/scorer for the primary comparison. Retain built-in signatures as secondary diagnostics.
-
-### How2Sign: broader ASL with larger storage needs
-
-The [provider page](https://how2sign.github.io/) lists frontal sentence clips at **31G train + 1.7G val + 2.2G test**, versus **290G + 16G + 23G** for frontal full recordings. Its 2D body/face/hand clip keypoints are **21G + 1.2G + 1.6G**. These are provider labels, not measured expanded sizes. The resource is research-only, under **CC-BY-NC-4.0**.
-
-Original clips can have imperfect sentence alignment. Manually realigned timestamp annotations can be used to segment full videos; do not pair those targets with differently segmented clips without checking. Declare the alignment version. The Panoptic subset does not make every clip calibrated 3D. The original paper also shows signer overlap in standard splits: do not call the whole benchmark signer-independent.
-
-**Code:** generic manifests work after annotation/observation conversion; no dedicated How2Sign adapter is bundled.
-
-### Recent ISL evaluation resources
-
-[WSLP 2026 findings](https://aclanthology.org/2026.wslp-1.2/) distinguish sentence translation, isolated recognition and word presence, and discuss weak grounding despite fluent T5 outputs. Obtain the actual **SLT** data and scorer from organizers. The recognition task's 4,398/109/526 examples are not sentence-translation counts. Preserve the held-out-source policy described in a [2026 SLT participant report](https://aclanthology.org/2026.wslp-1.13/).
-
-[ISH-NEWS](https://www.nature.com/articles/s41598-026-60893-0), published July 2026, uses 162 source recordings. Its availability statement offers annotations, splits, timestamps and preprocessing, while raw video redistribution is excluded for copyright reasons. It is optional until retrieval, terms and overlap with other ISH-derived corpora are checked. Its existence does not negate earlier ISLTranslate/iSign resources.
-
-## 3. Optional resources: targeted questions, not mandatory downloads
-
-| Resource | What it supplies | Appropriate use / limitation |
+| Priority | What to obtain | Reason |
 |---|---|---|
-| [OpenASL release](https://github.com/chevalierNoir/OpenASL) / [paper](https://arxiv.org/abs/2205.12870) | About 288 h ASL, over 200 signers; repository license CC-BY-NC-ND-4.0 | Later ASL expansion; acquisition, conversion and overlap audit required |
-| [BOBSL v1.4](https://www.robots.ox.ac.uk/~vgg/data/bobsl/) | 1,447 h excluding challenge; about 1.2M subtitles; train/val/test 993K/20K/165K | Large BSL pretraining, with weak subtitle alignment. Provider lists 331 GB MP4 / 1.5 TB frame LMDB. BBC approval and eligibility restrictions apply, including no independent-researcher/commercial use |
-| [YouTube-ASL](https://github.com/google-research/google-research/blob/master/youtube_asl/README.md) | 984 h, 610,193 captions | Later ASL weakly supervised pretraining; metadata access does not grant universal video redistribution rights |
-| [YouTube-SL-25 paper](https://arxiv.org/abs/2407.11144) / [release](https://github.com/google-research/google-research/tree/master/youtube_sl_25) | More than 3,000 h across more than 25 sign languages | Later multilingual pretraining; language identification, caption quality and new training/data engineering needed |
-| [FLEURS-ASL](https://aclanthology.org/2025.naacl-long.314/) | ASL by five Certified Deaf Interpreters, supporting multilingual evaluation | Reserve as external ASL evaluation rather than a large training source |
-| [SignNet-1M release status](https://github.com/openhe-hub/SignNet-1M) | 2026 synthetic view/background/identity augmentation; table currently lists 350,530 How2Sign variants, 134 GiB | Optional view stress test. Full approximately 1M corpus is not all marked released. Keep every derivative in its original source split; generated views are not independent recordings or physical 3D ground truth |
-| [CISLR](https://github.com/Exploration-Lab/CISLR) | ISL isolated word recognition | Optional separate lexical study; translation importer deliberately rejects it as a sentence corpus |
-| [ISL-FS / ISL-FS-Dense](https://kirandevraj.github.io/ISL-Fingerspelling/) | 1,308 original spelling segments; site also announces dense annotations and 11,700+ discovered segments | ISL fingerspelling diagnostic; audit ISH-source overlap; not sentence SLT |
-| [FSboard](https://openaccess.thecvf.com/content/CVPR2025/html/Georg_FSboard_Over_3_Million_Characters_of_ASL_Fingerspelling_Collected_via_CVPR_2025_paper.html) | More than 3M ASL fingerspelling characters, more than 250 h, 147 signers | Optional ASL spelling research; distinct from ISL and general sentence translation |
+| First ISL experiment | **iSign poses + translation CSV**, subject to access terms | Existing pose extraction avoids starting from raw video |
+| First controlled benchmark | **PHOENIX-2014T** translation release | Smaller conventional benchmark with official splits |
+| Second continuous benchmark | **CSL-Daily** or **How2Sign** | Chinese daily communication or broader ASL translation |
+| ISL external evaluation | WSLP **translation** task; optionally ISH-NEWS after overlap audit | Held-out source/domain evidence |
+| Existing lightweight isolated pose data | OpenHands labeled collection, especially INCLUDE | Useful only for a separately implemented lexical objective |
+| Later large-scale pretraining | Relevant-language OpenASL, BOBSL, CSL-News, YouTube corpora | More data, significantly more engineering and compute |
+| Specific failure analysis | ISL-FS/FSboard/ChicagoFSWild; optional geometry data | Spelling, tracking or viewpoint questions rather than ordinary sentence SLT |
 
-WLASL, MS-ASL, AUTSL and INCLUDE are not required for the first translation study. Classification, CTC recognition, contrastive pretraining and multi-task sampling are not implemented merely by listing their datasets. Do not report isolated-word accuracy as sentence-translation quality.
+**No dataset below is automatically a raw-file drop-in for PCAT-SLT.** Current training consumes prepared NPZ observations and JSONL written-text targets. The included synthetic diagnostics are the only fully generated, immediately executable datasets supplied by the project.
 
-## 4. Kaggle hardware: current recommendation
+### A. Continuous translation and linguistic corpora
 
-**Select GPU T4 ×2; use one card initially. Do not select TPU for this release.** The [Kaggle team announcement](https://www.kaggle.com/product-announcements/735239) retired P100 on **15 September 2026**, replacing it with T4 ×2, **16 GB per card**. Advice to select a Kaggle P100 is now stale.
+#### A1. iSign — ISL → English, first choice for the target language
 
-| Accelerator | Current project support | Recommendation |
+- Source: [authors' project](https://exploration-lab.github.io/iSign/), [current release/card](https://huggingface.co/datasets/Exploration-Lab/iSign/blob/main/README.md), [paper](https://arxiv.org/html/2407.05404v1).
+- Original publication: 118,228 video-sentence/phrase pairs, approximately 252 hours, with an 80/10/10 translation split described in the paper. That ratio does not identify the exact assignments or counts of a current release.
+- Existing inputs: v1.1 split video archives, four pose archive parts, `.pose` format and `iSign_v1.1.csv`. Keep only the modalities needed for your first pilot.
+- Preparation: read `.pose` headers/components, select joints explicitly, map coordinates/confidence and preserve frame timing; export NPZ and stable source-grouped manifests. The repository does not yet include that converter. Generic `uid,text` annotation import can reuse the `isltranslate` schema after normalization.
+- Splits/terms: group by source `video_id`; the card has research/noncommercial and further-upload restrictions. Obtain the intended hosted-processing permission before placing it on Kaggle; private hosting is not automatically permitted.
+- Compute: small pose pilot first; full visual data needs a storage survey and actual GPU measurements.
+
+#### A2. ISLTranslate — legacy ISL → English translation
+
+- Source: [original repository](https://github.com/Exploration-Lab/ISLTranslate), [2023 paper](https://aclanthology.org/2023.findings-acl.665/).
+- About 31k published sentence/phrase pairs. Repository describes MediaPipe holistic features and a `uid,text` CSV; its current dataset link points to iSign.
+- Preparation: identify the actual archive/version, convert its landmark convention, and supply an explicit split map to `pcat-import-corpus --dataset isltranslate`.
+- Audit: source IDs/intervals may overlap other ISL corpora. Do not sum headline counts or use it as independent test data without checking. Verify the terms of the archive actually supplied.
+- Compute: appropriate for a smaller ISL experiment after conversion; no measured training ETA is available.
+
+#### A3. PHOENIX-2014T — DGS → German
+
+- Source: [RWTH release](https://www-i6.informatik.rwth-aachen.de/~koller/RWTH-PHOENIX-2014-T/), [archive index](https://www-i6.informatik.rwth-aachen.de/ftp/pub/rwth-phoenix/2016/).
+- Standard translation split: 7,096 train / 519 dev / 642 test; see [original experiment table](https://openaccess.thecvf.com/content/CVPR2021/papers/Zhou_Improving_Sign_Language_Translation_With_Monolingual_Data_by_Sign_Back-Translation_CVPR_2021_paper.pdf). Provider lists the T archive at 39 GB.
+- Existing inputs: signing frames, gloss and written-language annotations. Directory name `features/fullFrame-210x260px` does not mean PCAT-compatible pose features.
+- Preparation: extract/obtain mapped landmarks; optionally create aligned crops; import official pipe-delimited `name, translation` records using the implemented adapter, with separate train/dev/test invocations.
+- Terms/splits: retain official assignments and provider attribution/terms; verify hosted-use rights. Narrow weather-domain results do not establish ISL conversational performance.
+- Compute: recommended first complete pose benchmark on Kaggle, after a measured pilot.
+
+#### A4. CSL-Daily — Chinese signing → Chinese
+
+- Source: [official access page](https://ustc-slr.github.io/datasets/2021_csl_daily/), [original paper/statistics](https://openaccess.thecvf.com/content/CVPR2021/papers/Zhou_Improving_Sign_Language_Translation_With_Monolingual_Data_by_Sign_Back-Translation_CVPR_2021_paper.pdf).
+- 18,401 train / 1,077 dev / 1,176 test; gloss and written Chinese annotations.
+- Access: research institutions; release agreement requires a full-time staff signature. Check archive contents and hosted processing against your approved agreement.
+- Preparation: mapped observations + the implemented `csldaily` annotation adapter. Use a suitable Chinese-capable text model or declared byte baseline. Score exported text with the benchmark's Chinese normalization; built-in whitespace ROUGE/13a BLEU is not an automatic equivalent.
+- Compute: second-stage benchmark; pose pilot on T4, larger-memory GPU for expensive visual variants if profiling requires it.
+
+#### A5. How2Sign — ASL → English with existing keypoints
+
+- Source: [provider downloads](https://how2sign.github.io/), [paper](https://openaccess.thecvf.com/content/CVPR2021/papers/Duarte_How2Sign_A_Large-Scale_Multimodal_Dataset_for_Continuous_American_Sign_Language_CVPR_2021_paper.pdf).
+- Original green-screen split: 31,128 / 1,741 / 2,322 clips, 79.12 h; separate approximately 3 h Panoptic material.
+- Existing modalities: videos, body/face/hand 2D keypoints and English annotations. Provider lists frontal clips at 31G train / 1.7G val / 2.2G test and keypoints at 21G / 1.2G / 1.6G. Full frontal recordings are 290G / 16G / 23G. These are provider download labels, not measured expanded sizes.
+- Preparation: map OpenPose-style keypoints and validity to the project layout, convert targets to generic JSONL. Choose original versus manually realigned segmentation consistently; different segmentation can change clip counts.
+- Terms: provider lists CC-BY-NC-4.0 and research-only use. Standard splits contain signer overlap; do not label the whole benchmark signer-independent.
+- Compute: a useful pose-first ASL option. RGB expansion and repeated NPZ decode need measurement before full visual training.
+
+#### A6. WSLP 2025/2026 translation shared tasks — ISL evaluation protocol
+
+- Sources: [2025 task page](https://exploration-lab.github.io/WSLP/task/), [2026 findings](https://aclanthology.org/2026.wslp-1.2/), [2026 translation report](https://aclanthology.org/2026.wslp-1.13/).
+- Choose the **SLT** track. Recognition and word-presence are different datasets/objectives; their split sizes are not translation counts.
+- Obtain the actual release, permitted training resources and scorer from the organizers. Availability of test labels, submissions and task downloads can differ after a challenge ends.
+- Preparation: convert supplied pose/video observations and exact task targets; retain disjoint source-video evaluation. No dedicated WSLP adapter exists.
+- Role: held-out ISL evaluation rather than another corpus to concatenate indiscriminately. The 2026 report discusses fluency versus grounding failures, so include input-dependence controls.
+
+#### A7. ISH-NEWS (2026) — smaller ISL news-domain study
+
+- Source: [original paper and data-availability section](https://www.nature.com/articles/s41598-026-60893-0).
+- Reports 4,222 sentence clips from 162 source recordings. Annotations, splits, timestamps and preprocessing are linked; raw videos are not redistributed for copyright reasons.
+- Preparation: obtain permissible source recordings, reconstruct exact intervals, map landmarks and targets. No dedicated adapter exists.
+- Role: optional extra-domain experiment after auditing overlap with ISH-sourced iSign, ISLTranslate, OpenHands and fingerspelling material. Publication open access is not blanket permission for the original videos.
+
+#### A8. Public DGS Corpus — German signing beyond weather
+
+- Source: [Hamburg project](https://www.sign-lang.uni-hamburg.de/dgs-korpus/public-dgs-corpus.html).
+- Public portals offer more than 50 h of DGS material with translations/annotations, including downloadable files. The full approximately 560 h parent corpus is not the same public release.
+- Preparation: convert linguistic annotation time spans to stable translation examples, handle conversational participants/views explicitly, extract landmarks and create your own documented source/signer split unless a chosen published protocol supplies one.
+- Access/terms: public portal access does not replace the release-specific reuse conditions. No ready PCAT adapter or official PCAT benchmark is bundled.
+- Role/compute: later domain-generalization research; preparation is more involved than PHOENIX.
+
+#### A9–A13. Larger translation/pretraining sources
+
+| ID / resource | Existing material / scale | Integration, access and sensible role |
 |---|---|---|
-| T4 ×2 | Single CUDA device; actual free memory shown by `nvidia-smi` | Best free start; batch 1 initially |
-| TPU | No TPU/XLA training/device path | Do not use with this source release |
-| A100 40/80 GB / H100 if actually available to your account | One CUDA device | More capacity for full multimodal runs; still profile |
-| CPU | Data checks and diagnostics | Avoid full-corpus multimodal training |
+| A9 [OpenASL](https://github.com/chevalierNoir/OpenASL), [paper](https://arxiv.org/abs/2205.12870) | About 288 h ASL, over 200 signers, translations/metadata | ASL expansion; repository CC-BY-NC-ND-4.0. Acquire observations, audit surviving sources, convert annotations/landmarks and deduplicate external pretraining. No PCAT adapter |
+| A10 [BOBSL v1.4](https://www.robots.ox.ac.uk/~vgg/data/bobsl/) | About 1.2M BSL subtitle sentences; 1,447 h excluding challenge; 331 GB listed MP4 / 1.5 TB frame LMDB | BBC agreement/eligibility restrictions. Interpret subtitles as potentially weak alignment and use task-specific aligned evaluation. Approved persistent compute, not the first Kaggle run |
+| A11 [YouTube-ASL](https://github.com/google-research/google-research/blob/master/youtube_asl/README.md) | 984 h, 610,193 captions in the release description | Later ASL pretraining; source retrieval/rights, temporal alignment, missing URLs and evaluation contamination need checks. No downloader/converter/objective-specific adapter supplied |
+| A12 [YouTube-SL-25](https://github.com/google-research/google-research/tree/master/youtube_sl_25), [paper](https://arxiv.org/abs/2407.11144) | More than 3,000 h across more than 25 sign languages | Metadata access does not make all raw videos freely redistributable. Language-conditioned sampling/model design is needed; do not flatten different languages into an unlabeled mixture |
+| A13 [CSL-News pose release](https://huggingface.co/datasets/ZechengLi19/CSL-News_pose) | Current card shows 722,711 rows and 256 GB repository files; pose pickle dictionaries contain `keypoints`, `scores`, `w_h`; written Chinese labels supplied | CC-BY-NC-4.0. Existing poses save detection work, but layout/timing/safe format conversion remains. Convert trusted-source object-bearing files in a separate preparation environment; runtime NPZ loader rejects pickles. Large-scale Chinese pretraining, not an ISL substitute |
 
-Two T4s are not one 32 GB device. The trainer implements neither DDP nor model sharding; normal training leaves card 2 idle. `torchrun` alone does not add distribution and may cause conflicting writes. Two independently GPU-bound experiments require separate output directories and sufficient host RAM; validate one first.
+Headline counts from papers and newer cards can differ. For CSL-News use the card's exact version/hash rather than mixing its counts with a third-party repack's split policy. No single download-size figure predicts prepared RGB volume or training memory.
 
-The [official Kaggle CLI docs](https://github.com/Kaggle/kaggle-cli/blob/main/docs/kernels.md) map `NvidiaTeslaT4` to T4 ×2 and `TpuV5E8` to TPU v5e-8. Other listed IDs can be competition/admin restricted; a listed A100/H100 ID does not guarantee free access. The [CLI reference](https://github.com/Kaggle/kaggle-cli/blob/main/skills/references/kernels.md) documents replacement of retired TPU-v3 IDs. Old TPU-v3 tutorials do not establish today's allocation.
+#### A14. AfriSign — multilingual African signing
 
-PyTorch TPU training requires an actual backend port, including runtime/device setup, optimizer synchronization, distributed input handling and compilation/precision checks. Adaptive shapes, variable clip lengths and Python scalar decisions need recompilation/synchronization profiling. See [PyTorch/XLA conversion docs](https://docs.pytorch.org/xla/master/learn/xla-examples.html). `device: tpu` is currently rejected.
+[Original research abstract/paper record](https://mlanthology.org/iclrw/2023/gueuwou2023iclrw-afrisign/), [OpenReview](https://openreview.net/forum?id=EHldk3J2xk). Bible-verse translations in six African sign languages provide a possible cross-language/domain research resource. This audit verified the research description, not unrestricted bulk archive download or hosted processing rights. Obtain the authors' current data instructions and terms first. New annotation/pose conversion and explicit language design are required; it is not a priority for the first ISL study.
 
-### Quota, sessions and persistence
+### B. External evaluation and synthetic robustness
 
-[Kaggle notebook specifications](https://www.kaggle.com/docs/notebooks) list **12 h CPU/GPU sessions**, **9 h TPU sessions**, **20 GB saved working output**, and about **29 GB host RAM / four CPU cores** for T4. Some hardware descriptions on that page still mention retired accelerators; use the newer announcement/CLI for hardware identity. Check the actual session timer, memory and output allowance.
+| Resource | Available resource / role | Important boundary |
+|---|---|---|
+| B1 [FLEURS-ASL](https://aclanthology.org/2025.naacl-long.314/) | ASL translated by five Certified Deaf Interpreters; multilingual sentence/discourse evaluation | Reserve held-out evaluation; convert observations according to exact task protocol. It is not a large supervised training corpus |
+| B2 [SignNet-1M](https://github.com/openhe-hub/SignNet-1M) | 2026 generated viewpoint/background/identity variants; release table lists 350,530 How2Sign variants, 134 GiB | Full approximately 1M release is not all marked downloadable. Keep derivatives with original source splits; synthetic identities are not independent human signers. Generated views do not prove physical 3D invariance |
+| B3 Included synthetic **pose order** | `pcat-demo-data`: reproducible nonlinguistic hand/face event-order codes | Fully generated offline, native NPZ/JSONL; ideal software check, never a real-language result |
+| B4 Included synthetic **pixel patterns** | `pcat-demo-visual`: actual observed pixel inputs with artificial labels | Tests visual learning/input dependence only; not mouthings, gaze or spelling accuracy |
 
-The [official GPU guide](https://www.kaggle.com/docs/efficient-gpu-usage) describes **30 h/week or sometimes higher**. [Staff's floating-quota explanation](https://www.kaggle.com/discussions/product-feedback/173129) establishes variability. Budget on the quota displayed in your account, with 30 h as a planning baseline. Do not promise a fixed TPU quota from old tutorials. Extra-hours promotions are not assumed here.
+### C. Isolated recognition: optional, requires a separate experiment
 
-Use authorized attached inputs under `/kaggle/input`, and keep project/output files under `/kaggle/working/PCAT-SLT`. Save a completed notebook version with outputs and retrieve checkpoints. Verify that the saved version actually contains `last.pt`, `best.pt`, config and logs; a file existing in a live session is not evidence it survived termination. Scratch outside saved output is temporary. Keep restricted data and credentials out of public notebooks/outputs.
+Current sentence trainer has no isolated classifier/CTC/retrieval objective. These datasets cannot establish continuous SLT performance. A deliberately designed clip-to-label text diagnostic is possible after observation conversion, but its metric and claim remain lexical recognition; it is not an implemented standard recognition benchmark.
 
-## 5. Memory: inspect the actual model, not only the GPU name
+| Resource | Already available | Size / terms / preparation notes |
+|---|---|---|
+| C1 [CISLR](https://github.com/Exploration-Lab/CISLR) | ISL word-level clips and labels | Target-language lexical resource; current corpus importer rejects it for continuous translation. Check provider's noncommercial/research conditions; source/video overlap audit still needed |
+| C2 [INCLUDE](https://huggingface.co/datasets/ai4bharat/INCLUDE), [raw-video record](https://zenodo.org/records/4010759) | ISL isolated videos, 263 sign labels; card has split metadata and download instructions | Card lists CC-BY-4.0. Existing OpenHands pose derivative is listed below. Dataset schema/class labels do not become sentence translations |
+| C3 [WLASL](https://github.com/dxli94/WLASL/blob/master/README.md) | ASL lexical annotations/download tools; processed/missing clips can be requested | Source URLs can expire. Agree to the provider's applicable use terms; do not interpret available annotation IDs as all videos downloaded. OpenHands pose derivative exists |
+| C4 [MS-ASL](https://www.microsoft.com/en-us/download/details.aspx?id=100121), [paper](https://arxiv.org/abs/1812.01053) | ASL recognition metadata with video acquisition information | The small Microsoft ZIP is metadata, not all raw videos. Respect its license and original content rights; verify actual available samples. OpenHands pose derivative exists |
+| C5 [AUTSL](https://cvml.ankara.edu.tr/datasets/) | Turkish isolated RGB/depth/body skeleton | Original provider: 226 signs, 43 signers, 38,336 samples; challenge versions can differ. Skeleton has 25 body points, not full PCAT hand/face observations. Use the exact agreement/version and map missing modalities honestly |
+| C6 [ASL Citizen](https://www.microsoft.com/en-us/research/project/asl-citizen/), [datasheet](https://www.microsoft.com/en-us/research/project/asl-citizen/datasheet/), [license](https://www.microsoft.com/en-us/research/project/asl-citizen/dataset-license/) | Consented isolated ASL recordings | Datasheet: 83,399 videos, 2,731 signs, 52 participants. Microsoft noncommercial research license; not general sentence translation. Need pose extraction/conversion |
+| C7 [LSA64](https://facundoq.github.io/datasets/lsa64/) | Argentinian isolated signs; raw/cut videos and preprocessed hand/head trajectories/crops | Provider lists approximately 1.9 GB raw, 1.5 GB cut, 800 MB preprocessed. Hand/head-only trajectories do not supply default torso anchors or face/hand joint structure. New model/layout policy required |
+| C8 [ASLLVD](https://www.bu.edu/asllrp/av/dai-asllvd.html) | ASL lexicon videos with annotation/access instructions | Citation-form lexicon, not a sentence corpus. Inspect camera/file formats and BU reuse terms. OpenHands skeleton derivative exists |
+
+#### C9. OpenHands labeled pose collection: useful existing preprocessing
+
+[Authors' Zenodo record](https://zenodo.org/records/6674324) lists approximately 6.0 GB total, including **INCLUDE 662.9 MB**, **WLASL 1.0 GB**, **MS-ASL 1.3 GB**, **AUTSL 1.5 GB**, **ASLLVD skeleton 264.3 MB**, **GSL 725.8 MB**, and **LSA64 cut/full 215.0/226.6 MB**. These are archive labels, not PCAT-converted sizes. The small `RWTH-PHOENIX-Weather-Signer03-cutout` archive is not the full PHOENIX-2014T translation benchmark.
+
+Useful because detection has already been done; still inspect layout, coordinates, scores, timing and upstream terms. A derivative record does not erase original conditions. GSL in this collection must be interpreted using that derivative's recognition metadata, not assumed to provide an arbitrary Greek translation split. No OpenHands loader is bundled here.
+
+#### C10. OpenHands unlabeled Indian-SL pose collection
+
+[Authors' record](https://zenodo.org/records/5558897), [pretraining documentation](https://github.com/AI4Bharat/OpenHands/blob/main/docs/instructions/self_supervised.rst): unlabeled pose material from ISH News, MBM Vadodara, NewzHook, NIOS and Sign Library; record lists **114.5 GB**. Documentation describes HDF5 keypoints/visibility for its pretraining pipeline.
+
+There are no sentence targets supplied merely by having unlabeled poses. Current PCAT supervised trainer cannot consume it without a new self-supervised objective/data path. Audit source overlap before pretraining. Inspect derivative and upstream permissions before cloud copies. This is optional future work, not a faster substitute for iSign translation labels.
+
+### D. Fingerspelling and entity accuracy
+
+| Resource | Existing material | How to use responsibly |
+|---|---|---|
+| D1 [ISL-FS](https://kirandevraj.github.io/ISL-Fingerspelling/) | 1,308 ISL spelling segments from 499 ISH News videos, aligned text | Specialized spelling experiment; verify source-disjoint splits, displayed-text shortcuts and access terms |
+| D2 [ISL-FS-Dense](https://kirandevraj.github.io/ISL-Fingerspelling/) | Same project's dense letter/frame labels and 11,700+ automatically discovered segments announced for 2026 | Distinguish manually verified base annotations from discovered segments; release availability/terms must be checked. Not independent of ISL-FS/ISH sources |
+| D3 [FSboard](https://openaccess.thecvf.com/content/CVPR2025/html/Georg_FSboard_Over_3_Million_Characters_of_ASL_Fingerspelling_Collected_via_CVPR_2025_paper.html) | More than 3M ASL characters, more than 250 h, 147 signers | Smartphone fingerspelling; requires dedicated task protocol, observation conversion and character-error evaluation. Not ISL lexical supervision |
+| D4 [ChicagoFSWild](https://home.ttic.edu/~klivescu/ChicagoFSWild.htm) | 7,304 ASL spelling sequences, 160 signers; 14 GB listed archive | Frames, processed spelling labels, partitions/signer metadata; hand-box annotations for a subset. Convert observations and preserve documented splits |
+| D5 [ChicagoFSWild+](https://home.ttic.edu/~klivescu/ChicagoFSWild.htm) | 55,232 ASL spelling sequences, 260 signers; 82 GB listed archive | Larger related release; do not assume it is independent of the smaller corpus. Review release terms and original-video permissions |
+
+Spelling can use an explicitly evaluated sequence-to-character decoder after conversion, but this repository does not supply the official specialized adapters, CTC head or CER reporting pipeline. Generic sentence BLEU is not adequate evidence of fingerspelling success.
+
+### E. Geometry/gesture resources: auxiliary research only
+
+| Resource | Available supervision | Role / boundary |
+|---|---|---|
+| E1 [InterHand2.6M](https://mks0601.github.io/InterHand2.6M/), [official repository/license](https://github.com/facebookresearch/InterHand2.6M/blob/main/README.md) | Interacting-hand pose images/3D annotations; CC-BY-NC-4.0 | Separate hand-tracker/geometry pretraining. No sign-language sentence targets or full torso/face observations; cannot be passed directly to the SLT trainer |
+| E2 [HaGRID / HaGRIDv2](https://github.com/hukenovs/hagrid/blob/master/README.md) | Gesture images/boxes and related recognition resources | Optional detector/gesture work, not sign-language translation. Provider specifies a variant of CC-BY-SA-4.0; read the actual license. No corresponding auxiliary objective is bundled |
+
+## 3. Model memory and starting configurations
 
 `configs/vpcat.yaml` is an experimental starting point, **not a certified T4 fit**: frozen DINOv2-small, trainable FLAN-T5-base decoder, width 320, four crops/frame, batch 2 and up to 400 frames. HF decoder depth comes from its pretrained architecture, not `model.decoder_layers` (which controls the native decoder).
 
@@ -155,18 +199,9 @@ On OOM, first use batch 1, smaller vision chunks and a smaller T5-family decoder
 
 `max_frames` rejects longer clips; it does not resample them. Changing it to 128 is not a working long-video solution. If offline temporal sampling is necessary, apply identical frame indices to pose/confidence/RGB/masks/timestamps, preserve physical timestamps and cover the whole sentence. Report frame-rate/duration distributions and exclusions. Front truncation can remove meaning; sparse sampling can destroy fingerspelling. Fix this policy before matched experiments.
 
-## 6. Data preparation before consuming GPU quota
+For larger runs, **one A100 40 GB is a reasonable proposed capacity target; 80 GB gives more room**, with 64–128 GB host RAM and storage sized from actual prepared inputs, potentially hundreds of GB or TB. These are provisioning targets, not measured minimums. [NVIDIA's specification](https://images.nvidia.com/data-center/a100/a100-datasheet.pdf) confirms the 40/80 GB variants. Check that an allocation is a full GPU rather than a small MIG slice. This single-device trainer gains nothing automatically from paying for eight GPUs.
 
-1. Acquire an authorized, pinned release. Record file hashes, terms, versions and assignment files. Raw corpora are not included in the source ZIP.
-2. Keep source recording, interval and signer metadata. All camera views/augmentations of a recording stay together. Unknown signer metadata does not prove signer independence.
-3. Map landmarks explicitly. Default 66-joint ordering, shoulder/neck anchors and configured hand/face/body regions are not raw MediaPipe/OpenPose ordering. Use consistent image-plane x/y units; do not mix hand-relative and image-relative coordinates. Use `depth_policy: ignore` for unreliable monocular z.
-4. Prepare pose NPZ: `[T,J,3]`, confidence `[T,J]` in [0,1], strictly increasing seconds `[T]`. Visual NPZ: `[T,4,3,112,112]` RGB in [0,1], bool mask `[T,4]`, exactly matching frame counts/timestamps/origin. Crop order: left hand, right hand, mouth, eyes. Missing observations remain marked absent.
-5. `scripts/prepare_rgb.py` takes frames and explicitly aligned image-plane boxes; it does not detect hands/faces or extract pose. A raw-video pose/box extractor and iSign `.pose` converter are not bundled. Crop normalization happens inside the encoder.
-6. Compute usable counts, min/median/p95/p99/max frame/target lengths, missing-joint/crop fractions, unanchored fraction, signer/source overlap and duration histograms. Inspect real clip/target alignment and tracker failures in every split without tuning on test labels.
-7. Follow [REAL_DATA.md](docs/REAL_DATA.md) to import and validate. PHOENIX split files are imported into separate fresh output directories. Manifest-relative paths resolve from their parent. Validator checks exact decoded/path leakage; near duplicates and upstream corpus overlap require provenance/content analysis too.
-8. Preserve official splits for comparisons and separately name any stronger source-/signer-held-out experiment. `--signer-independent` requires known nonoverlapping signer identities. Do not label a modified split as the official benchmark.
-
-### Storage: float crops can dominate everything
+## 4. Storage budget
 
 Original compressed-video size is not prepared-array size. Before compression, pose/confidence costs approximately `T × 66 × 4 × 4` bytes plus timestamps: about 0.21 MB at 200 frames. Four float32 112px RGB crops cost **120.4 MB/clip at 200 frames**.
 
@@ -183,63 +218,7 @@ Start pose-only, then a visual subset, then measure full-corpus storage/I/O feas
 
 Budget downloads **plus** extraction, processed arrays, HF cache and checkpoints. `best.pt` and `last.pt` contain full state, and atomic replacement creates a temporary third file. A rough checkpoint floor is `4 × total_model_parameters + 8 × parameters_with_Adam_state` bytes, excluding metadata. Measure the real file after updates. Keep at least three checkpoint-sized units free plus caches/logs. Do not put hundreds of GB of inputs into a 20 GB saved-output allowance.
 
-## 7. Concrete Kaggle workflow
-
-Use CPU sessions for preparation where practical. Create a private notebook, attach only authorized data and enable internet for package/model access when needed. No upload, remote training or dataset acquisition was performed while preparing this guide.
-
-Extract the source ZIP's single **PCAT-SLT** directory under `/kaggle/working`. Notebook setup cells:
-
-```python
-%cd /kaggle/working/PCAT-SLT
-```
-
-```bash
-!nvidia-smi
-!python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.device_count())"
-!python -m pip install -e '.[dev,multimodal]'
-!python -m pytest -q
-!python -m pip freeze > reports/kaggle_environment.txt
-```
-
-Retain Kaggle's CUDA-enabled torch if it meets project requirements. `requirements-verified.txt` records the local CPU environment; blindly imposing it can replace a working CUDA stack. Record Python, torch, transformers, driver and GPU. Profiles use HF `main`; pin immutable pretrained commit revisions before final research and retain tokenizer/config snapshots in checkpoints.
-
-Create `data/real` manifests using documented adapters after preparing observations. Stable absolute `/kaggle/input/...` paths may refer to authorized attached data. Keep generated project/config/report/weight files under PCAT-SLT.
-
-```bash
-!pcat-validate --config configs/kaggle_pose.yaml > reports/real_data_validation.json
-```
-
-For visual mode, validate with `configs/kaggle_visual.yaml`; it requires actual RGB and matching tokenizer assets. Validate all splits before training. A development subset needs separate manifests/config/output, leaving benchmark assignments intact. First overfit 32–128 training examples as a failure diagnostic, then use a 500–2,000-example training pilot. Neither establishes full-benchmark quality.
-
-Use the intended total epoch count in YAML from the start:
-
-```bash
-!pcat-train --config configs/kaggle_pose.yaml --stop-after-epoch 1
-```
-
-Next session, restore identical inputs/config/output and continue:
-
-```bash
-!pcat-train --config configs/kaggle_pose.yaml --resume runs/kaggle_pose/last.pt --stop-after-epoch 2
-```
-
-Increase the stop epoch for later chunks. Visual mode uses its own config and `runs/kaggle_visual/last.pt`. Stop chunks with time remaining to save outputs. Final frozen test evaluation:
-
-```bash
-!pcat-evaluate --checkpoint runs/kaggle_pose/best.pt --manifest data/real/test.jsonl --device cuda --output evaluation/kaggle_pose_test
-```
-
-Evaluate dev separately for selection. Built-in `best.pt` selection uses **validation NLL**, not BLEU. Autoregressive generation evaluation is separate and can cost much more than teacher-forced validation. Report length/EOS behavior and input dependence, not just fluency.
-
-### Resume constraints on a session-limited platform
-
-Checkpoints occur **at complete epoch boundaries**, not every step. An interrupted epoch is redone. Exact resume checks config except `output_dir`, manifest bytes and input fingerprints. Changing epochs, batch size, AMP, model revision, dataset or paths is rejected. Set total epochs before training so the cosine schedule stays consistent. Changing datasets/decoders is not `--resume`; a general weight-only fine-tuning-stage CLI is not bundled.
-
-Every startup/resume fingerprints all referenced pose/RGB files, adding considerable I/O. Absolute resolved paths participate; keep input layout stable. Preserve config, logs and both checkpoints, not just decoder weights. Profile reload memory separately.
-
-Operational recommendation: keep an epoch plus validation/writes below about **8–9 h**, leaving margin within a nominal 12 h session for setup/output capture. This margin is not an official limit. If one epoch exceeds the session, use longer-lived compute or implement/test true mid-epoch resume. Changing corpus shards between sessions is not exact resume.
-
-## 8. Training time and budget
+## 5. Training time and cost
 
 There is no measured fixed T4/A100 runtime yet. Prepared frames, crop size, missing observations, targets, dtype, decoder, NPZ decompression and storage throughput all affect it. CPU operator microbenchmarks cannot predict full GPU training.
 
@@ -271,46 +250,9 @@ An explicit budgeting assumption of **25% additional nontraining overhead** on t
 
 A first diagnostic with 1,000 examples × 10 epochs × batch 1 × a measured 1 s/batch would take **2.8 h training-only**. Its convergence is not evidence about the full corpus.
 
-### Measure an actual epoch using the existing trainer
+### Measuring your run
 
-Run this notebook cell with real prepared inputs and an unused output directory. It writes timing/memory/checkpoint evidence inside the project. The CUDA branch has not been exercised on the local CPU host.
-
-```python
-import json
-import time
-from pathlib import Path
-import torch
-from pcat_slt.config import load_config
-from pcat_slt.train import train
-
-cfg = load_config('configs/kaggle_pose.yaml')  # or kaggle_visual.yaml
-assert torch.cuda.is_available(), 'Select a Kaggle GPU first'
-torch.cuda.synchronize()
-torch.cuda.reset_peak_memory_stats()
-started = time.perf_counter()
-checkpoint = train(cfg, stop_after_epoch=1)
-torch.cuda.synchronize()
-report = {
-    'device': torch.cuda.get_device_name(0),
-    'torch': str(torch.__version__),
-    'total_planned_epochs': cfg.train.epochs,
-    'completed_epochs': 1,
-    'first_call_seconds': time.perf_counter() - started,
-    'peak_allocated_GiB': torch.cuda.max_memory_allocated() / 2**30,
-    'peak_reserved_GiB': torch.cuda.max_memory_reserved() / 2**30,
-    'checkpoint_bytes': Path(checkpoint).stat().st_size,
-    'batch_size': cfg.data.batch_size,
-    'accumulation': cfg.train.accumulation,
-    'config': cfg.to_dict(),
-}
-Path('reports').mkdir(exist_ok=True)
-Path('reports/kaggle_first_epoch.json').write_text(json.dumps(report, indent=2))
-print(json.dumps(report, indent=2))
-```
-
-This measures downloads/loading, hashing, an epoch, validation and writes, not pure steady-state training. In a fresh next session, similarly time `train(cfg, resume='runs/kaggle_pose/last.pt', stop_after_epoch=2)` (use the visual path when appropriate). That includes reload/hashing overhead. Do not rerun the non-resume cell over existing output.
-
-Use whole-call measurements conservatively for session planning. Measure generation and preparation separately. Keep `nvidia-smi` logs: PyTorch allocation excludes other CUDA/process memory, while reserved memory includes allocator cache. One short successful batch does not prove longest-clip or resume fit. Check validation/test lengths too. Evaluation reloads in normal precision; it does not automatically use training AMP.
+Use the timing cell in [the Kaggle notebook](notebooks/Kaggle_PCAT_SLT.ipynb), following [the walkthrough](docs/KAGGLE_RUNBOOK.md). It records a complete train/validation/checkpoint call and CUDA peak allocation/reservation. Measure a resumed call and generation separately; initial download/hashing/load time is not steady-state training throughput.
 
 ### Whole-study compute
 
@@ -325,34 +267,3 @@ An approved university/research server is the first choice when its data-access 
 The Runpod public Pods page, checked 14 November 2026 and labeled updated 12 November, displayed **A100 PCIe 80 GB at $2.09/h**, **H100 PCIe 80 GB at $2.89/h**, and **L40S 48 GB at $1.09/h**. These are page snapshots, not reserved availability or a checkout quote; pool, region and selected offering can change the rate. Verify the deployment screen and storage charges before committing. [Source: Runpod pricing](https://www.runpod.io/pricing).
 
 If a run actually measures **100 billed hours on that A100 offering**, compute alone at the displayed rate would be **$209**; 500 h would be **$1,045**, before storage/other charges. These examples do not convert the T4 timing scenarios into A100 runtimes. L40S's larger capacity is useful, but its lower listed hourly price does not prove a lower cost per completed experiment. Measure throughput on the exact allocated device.
-
-## 9. Research plan and initial hyperparameters
-
-1. **Data/software gate:** validate data, inspect alignment, pass tests on the selected CUDA environment and overfit a tiny training subset. Show input dependence so a pretrained decoder cannot win through fluent hallucination.
-2. **PHOENIX mechanism pilot:** compare PCAT with otherwise matched temporal/first-order controls, fixing data, decoder/backbone, schedule, tuning budget and seeds. Use generated dev metrics as well as NLL.
-3. **Main ablations:** joint versus additional local clocks; dense versus sketched area; first-order/no-transport; exact Cayley versus Givens as distinct maps. Match capacity as closely as possible and disclose differences. Byte versus larger pretrained text is not proof of the primitive.
-4. **Visual extension:** add actual crops under a fixed observation policy. Test RGB/pose masking and temporal shuffling; report peak memory, throughput, generation latency and parameters. The included pixel toy is not an SLT benchmark.
-5. **ISL study:** iSign with documented source-held-out assignments and deduplicated external evaluation. Preserve order/timestamps; separate cross-language transfer from native ISL learning.
-6. **Broader robustness:** independently train CSL-Daily or How2Sign if claiming breadth. Test frame-rate changes, missing landmarks/crops and known held-out signers. Distinguish conditional mathematical invariants from physical perspective robustness.
-7. **Final evidence:** at least three seeds for main conclusions; paired bootstrap intervals on fixed predictions; explicit scoring normalization/signatures; correct Chinese scoring; exclusions/versions; fluent/Deaf-signer adequacy review where available, especially negation, entities, non-manuals and fingerspelling. Test outputs must not drive hyperparameter tuning.
-
-Starting configs use AdamW, clipping 1, accumulation for nominal effective batch 8, initial seed 17 (expand to 17/23/41). Native-byte pilot LR is `3e-4`; pretrained-text pilot LR is `5e-5`. These are proposed starting values, not tuned optima. Make a small dev-only search with equal budgets for controls. Keep target smoothing/selection consistent. Nominal batch equality does not imply equal token counts across languages. Track EOS, length, rare terms and input grounding.
-
-## 10. Practical work still needed before scaling
-
-| Issue | Immediate action | Not currently supplied |
-|---|---|---|
-| Access / hosted restrictions | Confirm actual provider/release terms | Universal upload permission |
-| Videos / `.pose` | Explicit layout, crop, timestamp conversion | All-corpus extraction/conversion pipeline |
-| RGB storage/I/O | Measure compression and decode throughput first | Streaming/cached-feature training input |
-| Session termination | Complete-epoch chunks and verified saved outputs | Mid-epoch preemption resume |
-| Two T4 devices | Use one initially | DDP/FSDP/sharding |
-| TPU | Choose CUDA | TPU integration/tests |
-| Changed dataset after pretraining | Separate weight-transfer stage design | General weight-only fine-tune CLI |
-| Long clips | Audit lengths and sampling policy | Automatic bucketing/long-sequence strategy |
-| Chinese scoring | External benchmark scorer on exported predictions | Language-specific CLI scorer selection |
-| Quality/efficiency claims | Measure real-data results and CUDA performance | Proven SOTA/publication guarantees |
-
-For larger runs, **one A100 40 GB is a reasonable proposed capacity target; 80 GB gives more room**, with 64–128 GB host RAM and storage sized from actual prepared inputs, potentially hundreds of GB or TB. These are provisioning targets, not measured minimums. [NVIDIA's specification](https://images.nvidia.com/data-center/a100/a100-datasheet.pdf) confirms the 40/80 GB variants. Check that an allocation is a full GPU rather than a small MIG slice. This single-device trainer gains nothing automatically from paying for eight GPUs.
-
-Immediate sequence: **authorized data → pose pilot on T4 → measured complete epoch and resume → PHOENIX matched comparison → iSign on approved persistent compute → budgeted visual expansion**.

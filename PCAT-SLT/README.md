@@ -2,7 +2,7 @@
 
 **Visual, multirate Progress-Coupled Area Transport**: PyTorch code, real RGB input, optional pretrained T5/mT5 text decoding, annotation importers and executable mathematical/integration tests.
 
-This release implements the defensible parts of the supplied audit and corrects several of its prescriptions. A short Neumann inverse is not orthogonal; dynamic centering alone can erase body grammar; pretrained models do not guarantee a BLEU gain. Read [the audit response](docs/AUDIT_RESPONSE.md), [architecture/proofs](ARCHITECTURE.md) and [remaining limitations](docs/LIMITATIONS.md).
+This release implements the defensible parts of the supplied audit and corrects several of its prescriptions. A short Neumann inverse is not orthogonal; dynamic centering alone can erase body grammar; pretrained models do not guarantee a BLEU gain. Read [the audit response](docs/history/AUDIT_RESPONSE.md), [architecture/proofs](ARCHITECTURE.md) and [remaining limitations](docs/LIMITATIONS.md).
 
 ## Implemented upgrades
 
@@ -46,26 +46,21 @@ The diagnostic makes pose static and labels simple observed pixel patterns with 
 
 For the original geometric task, use `pcat-demo-data` with `configs/smoke.yaml` or `configs/enhanced_smoke.yaml`. Historical results are under `reports/v1/` and `reports/v2/`; their numbers are not current real-corpus results.
 
-## Real observations and corpora
+## Documentation
 
-Read [TRAINING_AND_DATASETS.md](TRAINING_AND_DATASETS.md) for dataset priorities, current Kaggle hardware, access terms, storage, conditional runtime budgets and pose/visual Kaggle starting profiles. CUDA performance has not yet been measured.
+| File | Purpose |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Current model, equations and guarantee boundaries |
+| [TRAINING_AND_DATASETS.md](TRAINING_AND_DATASETS.md) | Single dataset catalog, memory/storage requirements and training-time/cost planning |
+| [docs/KAGGLE_RUNBOOK.md](docs/KAGGLE_RUNBOOK.md) | Accelerator selection and step-by-step Kaggle setup, training, saving and recovery |
+| [notebooks/Kaggle_PCAT_SLT.ipynb](notebooks/Kaggle_PCAT_SLT.ipynb) | Executable diagnostic and prepared-data Kaggle workflows |
+| [docs/DATA.md](docs/DATA.md) | Array formats, landmark layout, crop preparation and corpus import commands |
+| [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Baselines, ablations, initial settings and evaluation protocol |
+| [docs/LITERATURE.md](docs/LITERATURE.md) | Research references and novelty assessment |
+| [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | Remaining limitations and unverified claims |
+| [reports/VERIFICATION.md](reports/VERIFICATION.md) | Executed tests, measurements and verification scope |
 
-Use the [expanded dataset catalog](docs/DATASET_CATALOG.md), [detailed Kaggle walkthrough](docs/KAGGLE_RUNBOOK.md) and [importable Kaggle notebook](notebooks/Kaggle_PCAT_SLT.ipynb) for source links, preparation requirements, accelerator choice and complete-epoch save/resume instructions.
-
-See [docs/DATA.md](docs/DATA.md) and [docs/REAL_DATA.md](docs/REAL_DATA.md). Provide prepared landmark NPZs and actual aligned RGB crop NPZs. Crop boxes must be in image coordinates; independently normalized hand depths are not automatically calibrated geometry. The monocular example drops z explicitly. It still needs consistent x/y coordinates or the declared unanchored-RGB fallback.
-
-```bash
-python scripts/prepare_rgb.py --frames data/clip_frames --boxes data/clip_boxes.npz --output data/clip_rgb.npz
-pcat-import-corpus --dataset isltranslate --annotations data/ISLTranslate.csv \
-  --split-map data/splits.json --pose-root data/poses --rgb-root data/rgb --output data/real
-pcat-validate --config configs/vpcat.yaml
-pcat-train --config configs/vpcat.yaml
-pcat-evaluate --checkpoint runs/vpcat_real/best.pt --output evaluation/vpcat
-```
-
-`configs/vpcat.yaml` specifies DINOv2-small and FLAN-T5-base. **Initial training downloads those weights/tokenizer unless local paths/caches are supplied.** Use immutable Hub revisions for reproducible fresh initialization. Choose an appropriate language model for the written target language; language priors can hallucinate and need SLT fine-tuning. Model/data downloads and target-hardware memory must be planned separately; raw licensed corpora are not bundled.
-
-Annotation importers do not create missing observations or invent splits. PHOENIX supports its pipe CSV; ISLTranslate supports official `uid,text` CSV plus an explicit assignment map; CSL-Daily supports primitive `info` metadata or normalized JSON/CSV. CISLR is word-level recognition and is deliberately rejected as sentence translation. CSL-Daily requires its provider's access agreement. No agreement submissions or external messages were sent.
+`docs/history/` retains earlier derivations and the supplied audit/response for provenance. Start with the current documents above; historical files describe earlier versions. Raw videos, pose extraction and complete corpus conversion are not bundled. Prepare observations using `docs/DATA.md` before using a real-data configuration.
 
 ## Configurations and modes
 

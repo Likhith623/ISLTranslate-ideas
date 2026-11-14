@@ -16,7 +16,7 @@ Keep preprocessing, landmark estimator, confidence treatment, decoder, source to
 python scripts/run_ablations.py --config configs/invariant.yaml --seeds 17 23 41
 ```
 
-This writes ten fully resolved configurations per seed, including scale, progress-coordinate and detail-memory controls. Add `--execute` to train them sequentially. It does not download data or claim to reproduce external papers. Train and evaluate each checkpoint on the same manifests. Compare:
+This writes 18 fully resolved configurations per seed, including scale, progress-coordinate and detail-memory controls. Add `--execute` to train them sequentially. It does not download data or claim to reproduce external papers. Train and evaluate each checkpoint on the same manifests. Compare:
 
 1. PCAT versus `no_transport`: the primary test of the proposed action, with the same bounded area statistics.
 2. PCAT versus `signature`: a basic learned-embedding level-two signature baseline.
@@ -47,6 +47,8 @@ Retiming or mirroring can change a valid sign's meaning; do not assume labels re
 ## 4. Measures and reporting
 
 Use autoregressive BLEU-1..4 with the saved SacreBLEU signatures, chrF++, and precisely defined ROUGE-L. The included ROUGE metric is macro whitespace-token LCS F1 with beta=1, case sensitivity and no stemming; it must not be compared to another ROUGE variant without recalculation. UTF-8 byte accuracy is not a substitute for translation evaluation. Report EOS rate and invalid-byte effects. For short artificial codes, BLEU-4 with effective order disabled is inherently zero and uninformative.
+
+For Chinese targets, built-in SacreBLEU `13a` and whitespace-token ROUGE-L are not automatically equivalent to published character-tokenized scores. Use the benchmark's documented Chinese normalization/scorer on exported predictions for primary comparisons.
 
 Select checkpoints by development NLL as implemented, or preregister a different development-only criterion for all baselines. Report all seeds, mean and standard deviation, paired corpus-bootstrap confidence intervals, parameter counts (both nominal and trainable), wall time and peak training/inference memory. A small six-example synthetic test set has no scientific inferential value for SLT.
 
@@ -81,3 +83,9 @@ Compare Cayley with Givens as different orthogonal actions, not as numerically e
 The supplied audit's +15–20 BLEU and 3× GPU claims are hypotheses without supporting experiments here. A pretrained language model can increase fluent hallucination; evaluate adequacy and visual grounding, not grammar alone. Validate learned mouth/eye/finger behavior with actual linguistic examples and qualified signers. A pixel bar-pattern diagnostic is not evidence about any sign-language minimal pair.
 
 Before publication, use appropriate licensed corpora and reproduce relevant modern visual/pretrained SLT baselines with disclosed budgets. The existing primary-source novelty audit still applies: none of the new backbones, EMA, area sketches or plane rotations is individually claimed as a fundamental new mathematical invention.
+
+## Initial pilot settings
+
+Overfit 32–128 training examples as a failure diagnostic, then use a separate 500–2,000-example training pilot with new manifests/config/output. Neither is a full-corpus result.
+
+Starting configs use AdamW, clipping 1, accumulation for nominal effective batch 8, initial seed 17 (expand to 17/23/41). Native-byte pilot LR is `3e-4`; pretrained-text pilot LR is `5e-5`. These are proposed starting values, not tuned optima. Make a small dev-only search with equal budgets for controls. Keep target smoothing/selection consistent. Nominal batch equality does not imply equal token counts across languages. Track EOS, length, rare terms and input grounding.

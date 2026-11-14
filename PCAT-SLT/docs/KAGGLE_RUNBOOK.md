@@ -1,6 +1,6 @@
 # Kaggle walkthrough: PCAT-SLT from setup to saved checkpoint
 
-Checked against source on **14 November 2026**. Companion files: [dataset catalog](DATASET_CATALOG.md), [training/budget guide](../TRAINING_AND_DATASETS.md), [ready-to-import notebook](../notebooks/Kaggle_PCAT_SLT.ipynb). The notebook offers a generated-data diagnostic and separate prepared-real-data pose/visual modes. Local validation is not a claim that a Kaggle CUDA session was executed.
+Checked against source on **14 November 2026**. Companion files: [datasets and training budget](../TRAINING_AND_DATASETS.md), [ready-to-import notebook](../notebooks/Kaggle_PCAT_SLT.ipynb). The notebook offers a generated-data diagnostic and separate prepared-real-data pose/visual modes. Local validation is not a claim that a Kaggle CUDA session was executed.
 
 ## 1. Exactly which accelerator to select
 
@@ -50,7 +50,7 @@ Example schema (IDs/paths here illustrate the required structure):
 
 Only include signer IDs if they are actually known. In visual mode add `"rgb":"rgb/recording42-clip7.npz"`. Use source-video metadata so leakage checks can enforce grouping. See [the exact arrays/layout](DATA.md). At least two frames are required; the provided profiles reject clips over 400 frames and excessive target lengths. Limits are not automatic truncation/sampling. Confirm the full distributions before training.
 
-If official annotations have not been converted, use [the implemented importers](REAL_DATA.md). iSign needs actual landmark-layout conversion first. PHOENIX import accepts one official split file at a time into a fresh directory; point each YAML manifest path at the appropriate result or assemble stable generic manifests. Do not guess missing extraction steps.
+If official annotations have not been converted, use [the implemented importers](DATA.md). iSign needs actual landmark-layout conversion first. PHOENIX import accepts one official split file at a time into a fresh directory; point each YAML manifest path at the appropriate result or assemble stable generic manifests. Do not guess missing extraction steps.
 
 ## 4. Create the notebook and attach inputs
 

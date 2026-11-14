@@ -1,6 +1,6 @@
 # Remaining limitations after the v0.3 audit
 
-This is a scoped resolution record, not a claim that all SLT research is solved. The original v0.2 table is preserved in `history/LIMITATIONS_V2.md`; the supplied review and the complete response are in `history/EXTERNAL_AUDIT_V2.txt` and `AUDIT_RESPONSE.md`.
+This is a scoped resolution record, not a claim that all SLT research is solved. The original v0.2 table is preserved in `history/LIMITATIONS_V2.md`; the supplied review and the complete response are in `history/EXTERNAL_AUDIT_V2.txt` and `history/AUDIT_RESPONSE.md`.
 
 | Topic | Implemented resolution | What remains |
 |---|---|---|

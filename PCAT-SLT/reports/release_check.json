@@ -20,12 +20,22 @@
   },
   "dataset_catalog_notebook_addendum": {
     "date": "2026-11-14",
-    "catalog": "docs/DATASET_CATALOG.md",
+    "catalog": "TRAINING_AND_DATASETS.md",
     "walkthrough": "docs/KAGGLE_RUNBOOK.md",
     "notebook": "notebooks/Kaggle_PCAT_SLT.ipynb",
     "checks": "reports/kaggle_notebook_checks.json",
     "lint": "passed",
     "cuda_tested": false,
     "real_corpus_trained": false
+  },
+  "documentation_consolidation": {
+    "dataset_catalog": "TRAINING_AND_DATASETS.md",
+    "data_format_and_import": "docs/DATA.md",
+    "kaggle_procedure": "docs/KAGGLE_RUNBOOK.md",
+    "audit_response": "docs/history/AUDIT_RESPONSE.md",
+    "notebook_code_unchanged": true,
+    "local_links_checked": 36,
+    "notebook_python_syntax": "passed",
+    "notebook_code_hash_unchanged": true
   }
 }

@@ -2,7 +2,7 @@
 
 ## Dataset catalog and Kaggle notebook addendum
 
-The expanded `docs/DATASET_CATALOG.md`, `docs/KAGGLE_RUNBOOK.md` and `notebooks/Kaggle_PCAT_SLT.ipynb` are linked from the main training guide. `kaggle_notebook_checks.json` records notebook syntax/local links, source ZIP bootstrap/hash verification, a CPU diagnostic train/dev-generation run, a second fresh Python process with workspace recovery to epoch two, run-bundle hashes, and prepared-manifest pose/visual setup checks using synthetic observations. Dependencies were reused locally; notebook installation, Kaggle service/CUDA execution and real pretrained/corpus runs were not exercised. CPU diagnostic timings must not be extrapolated to GPU/corpus performance.
+The README maps the consolidated dataset/budget guide, Kaggle walkthrough and notebook. `kaggle_notebook_checks.json` records notebook syntax/local links, source ZIP bootstrap/hash verification, a CPU diagnostic train/dev-generation run, a second fresh Python process with workspace recovery to epoch two, run-bundle hashes, and prepared-manifest pose/visual setup checks using synthetic observations. Dependencies were reused locally; notebook installation, Kaggle service/CUDA execution and real pretrained/corpus runs were not exercised. CPU diagnostic timings must not be extrapolated to GPU/corpus performance. Documentation consolidation changed only the notebook's Markdown references; its executed code-cell hash is preserved.
 
 **14 November 2026**. Python 3.12.14, PyTorch 2.15.0, Transformers 4.57.6, macOS ARM64, CPU. Optional multimodal dependencies were installed; exact versions are in `requirements-verified.txt`. Historical v0.1/v0.2 evidence is in separate subdirectories.
 

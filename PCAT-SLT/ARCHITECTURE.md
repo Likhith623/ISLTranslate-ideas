@@ -1,6 +1,6 @@
 # PCAT-SLT v0.3: visual, multirate, bounded-area transport
 
-A complete research implementation with optional RGB and pretrained text, incorporating the supplied audit and a further correctness review. It is **not** a proof of state-of-the-art translation or universal perfection. [Audit decisions](docs/AUDIT_RESPONSE.md) distinguish real defects from unsupported claims. The full v0.2 proofs/specification remain in [history](docs/history/ARCHITECTURE_V2.md).
+A complete research implementation with optional RGB and pretrained text, incorporating the supplied audit and a further correctness review. It is **not** a proof of state-of-the-art translation or universal perfection. [Audit decisions](docs/history/AUDIT_RESPONSE.md) distinguish real defects from unsupported claims. The full v0.2 proofs/specification remain in [history](docs/history/ARCHITECTURE_V2.md).
 
 ```mermaid
 flowchart LR

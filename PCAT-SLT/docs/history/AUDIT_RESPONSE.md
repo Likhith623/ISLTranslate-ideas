@@ -1,6 +1,6 @@
 # Response to the supplied external audit
 
-Reviewed against the implementation on **14 November 2026**. The original review is preserved in `history/EXTERNAL_AUDIT_V2.txt`. Its identified gaps are useful, but its proposed numerical shortcut and promised outcomes are not all valid.
+Reviewed against the implementation on **14 November 2026**. The original review is preserved in `EXTERNAL_AUDIT_V2.txt`. Its identified gaps are useful, but its proposed numerical shortcut and promised outcomes are not all valid.
 
 ## Finding-by-finding decisions
 
@@ -25,7 +25,7 @@ P=(I+A+A²+A³)(I+A)=(I-A⁴)Q=(15/16)Q,
 
 where Q is exact Cayley. Thus PᵀP=(225/256)I: its diagonal orthogonality defect is **31/256 = 0.12109375** despite satisfying the convergence assumption. Convergence of an infinite series does not make a short truncation orthogonal or accurate enough. This expression is a truncated Neumann expansion, not a general guarantee from a Padé approximation.
 
-The replacement rotates disjoint coordinate planes in a palindromic schedule. Each plane rotation is orthogonal; their product remains orthogonal and has the correct sign-reversal inverse. It avoids an LU solve entirely while retaining a mathematically defensible property. See `../ARCHITECTURE.md` and `../reports/transport_benchmark.json` for the precise definition and measurements.
+The replacement rotates disjoint coordinate planes in a palindromic schedule. Each plane rotation is orthogonal; their product remains orthogonal and has the correct sign-reversal inverse. It avoids an LU solve entirely while retaining a mathematically defensible property. See `../../ARCHITECTURE.md` and `../../reports/transport_benchmark.json` for the precise definition and measurements.
 
 ## Claims in the review that need correction or evidence
 

@@ -1,5 +1,9 @@
 # Changes
 
+## Documentation cleanup
+
+Consolidated dataset selection and budgets into `TRAINING_AND_DATASETS.md`, observation formats/importers into `docs/DATA.md`, and Kaggle procedures into `docs/KAGGLE_RUNBOOK.md`. Removed two overlapping documents and repeated walkthrough/profiling text, moved the audit response into `docs/history/`, and added a README file map. Model, training and notebook code are unchanged.
+
 ## Training documentation and Kaggle notebook addendum — 14 November 2026
 
 Expanded the dataset catalog with existing-pose archives, translation/recognition/spelling distinctions, provider links, access conditions and conversion requirements. Added a detailed accelerator/setup/save/resume walkthrough and an importable Kaggle notebook with generated-data, prepared-pose and prepared-visual routes. CPU verification exercised source-ZIP bootstrap, diagnostic training/generation, fresh-process checkpoint recovery and hashed run bundles; CUDA and real-corpus execution remain unverified. Source packaging excludes notebook checkpoint caches.
