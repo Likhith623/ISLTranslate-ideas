@@ -1,0 +1,56 @@
+{
+  "checked_date": "2026-11-14",
+  "notebook_sha256": "430022a4d90239bbdbebe62282ab3d5294aa57ef30ec79921e60932800a1f4b3",
+  "python_syntax": "passed",
+  "local_doc_links": "passed",
+  "source_zip_bootstrap_and_hashes": "passed",
+  "diagnostic_train_and_dev_generation": "passed",
+  "fresh_process_workspace_restore_and_epoch_resume": "passed",
+  "run_bundle_hashes": "passed",
+  "phases": [
+    {
+      "phase": 1,
+      "checkpoint_epoch": 1,
+      "history_rows": 1,
+      "timing": {
+        "mode": "diagnostic",
+        "device": "cpu",
+        "resumed": false,
+        "call_seconds": 1.4123153340187855,
+        "stop_after_epoch": 1,
+        "planned_total_epochs": 8,
+        "batch_size": 8,
+        "accumulation": 1,
+        "checkpoint_bytes": 569115,
+        "peak_allocated_GiB": null,
+        "peak_reserved_GiB": null
+      }
+    },
+    {
+      "phase": 2,
+      "checkpoint_epoch": 2,
+      "history_rows": 2,
+      "timing": {
+        "mode": "diagnostic",
+        "device": "cpu",
+        "resumed": true,
+        "call_seconds": 1.0277371249976568,
+        "stop_after_epoch": 2,
+        "planned_total_epochs": 8,
+        "batch_size": 8,
+        "accumulation": 1,
+        "checkpoint_bytes": 569115,
+        "peak_allocated_GiB": null,
+        "peak_reserved_GiB": null
+      }
+    }
+  ],
+  "cuda_tested": false,
+  "real_datasets_tested": false,
+  "test_scope": "Two fresh Python processes; CPU diagnostic; installed dependencies reused; installation/test cell and IPython link rendering skipped. No Kaggle service or pretrained real models exercised.",
+  "prepared_manifest_routes": {
+    "pose": "passed: synthetic prepared manifests retain absolute input paths/metadata and load expected arrays; repeated setup is stable",
+    "visual": "passed: synthetic prepared manifests retain absolute input paths/metadata and load expected arrays; repeated setup is stable"
+  },
+  "lint": "passed"
+}

@@ -1,5 +1,9 @@
 # Changes
 
+## Training documentation and Kaggle notebook addendum — 14 November 2026
+
+Expanded the dataset catalog with existing-pose archives, translation/recognition/spelling distinctions, provider links, access conditions and conversion requirements. Added a detailed accelerator/setup/save/resume walkthrough and an importable Kaggle notebook with generated-data, prepared-pose and prepared-visual routes. CPU verification exercised source-ZIP bootstrap, diagnostic training/generation, fresh-process checkpoint recovery and hashed run bundles; CUDA and real-corpus execution remain unverified. Source packaging excludes notebook checkpoint caches.
+
 ## 0.2.0
 
 Implemented exact prefix-area interval extraction with a clipping oracle/fallback, shared-clock multiscale tokens, normalized-progress augmentation, bounded metric conditioning, optional unprojected full-frame detail/timing memory, padding-safe reference fallback and strict UTF-8 generation. Added exact source-group leakage checks, selectable float64 integration, matched configuration controls, expanded proofs and a limitation-by-limitation audit.

@@ -50,6 +50,8 @@ For the original geometric task, use `pcat-demo-data` with `configs/smoke.yaml` 
 
 Read [TRAINING_AND_DATASETS.md](TRAINING_AND_DATASETS.md) for dataset priorities, current Kaggle hardware, access terms, storage, conditional runtime budgets and pose/visual Kaggle starting profiles. CUDA performance has not yet been measured.
 
+Use the [expanded dataset catalog](docs/DATASET_CATALOG.md), [detailed Kaggle walkthrough](docs/KAGGLE_RUNBOOK.md) and [importable Kaggle notebook](notebooks/Kaggle_PCAT_SLT.ipynb) for source links, preparation requirements, accelerator choice and complete-epoch save/resume instructions.
+
 See [docs/DATA.md](docs/DATA.md) and [docs/REAL_DATA.md](docs/REAL_DATA.md). Provide prepared landmark NPZs and actual aligned RGB crop NPZs. Crop boxes must be in image coordinates; independently normalized hand depths are not automatically calibrated geometry. The monocular example drops z explicitly. It still needs consistent x/y coordinates or the declared unanchored-RGB fallback.
 
 ```bash

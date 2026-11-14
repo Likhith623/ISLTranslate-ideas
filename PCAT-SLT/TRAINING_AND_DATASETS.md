@@ -2,6 +2,8 @@
 
 Research checked **14 November 2026**, using provider pages, original papers and the current PCAT-SLT v0.3 source. Linked sources establish external facts; proposed experiments and hardware choices are engineering recommendations. Release contents, access terms and platform allocations can change.
 
+**Start here:** [expanded dataset catalog](docs/DATASET_CATALOG.md) lists translation, already-extracted pose, isolated-sign, spelling and auxiliary resources with source/access/conversion details. [Kaggle walkthrough](docs/KAGGLE_RUNBOOK.md) gives accelerator selection, setup, first run, output saving, fresh-session resume and troubleshooting. Import [the companion notebook](notebooks/Kaggle_PCAT_SLT.ipynb) for the executable diagnostic/prepared-data routes. Third-party datasets are linked, not redistributed in this source folder.
+
 ## 1. Recommended path
 
 **Start on Kaggle T4 ×2 with a pose-only pilot. Use PHOENIX-2014T for the first full controlled comparison. For an Indian Sign Language product, make iSign the main ISL training resource and use source-disjoint ISL evaluation. For sustained multimodal experiments, prefer an institution-approved server with one A100 40/80 GB or equivalent CUDA GPU and persistent storage.**

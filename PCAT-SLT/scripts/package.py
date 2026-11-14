@@ -13,7 +13,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     output = Path(args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    excluded = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache", "data", "runs",
+    excluded = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".ipynb_checkpoints", "data", "runs",
                 "evaluation", "build", "dist", "releases"}
     files = []
     for path in sorted(root.rglob("*")):
